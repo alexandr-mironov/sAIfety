@@ -44,7 +44,7 @@ func TestRealWorkerFixture(t *testing.T) {
 			t.Fatal(r.Error)
 		}
 	}
-	if info.Info == nil || info.Info.ManifestSHA256 != pin || len(tokens.IDs) == 0 || len(tokens.IDs) > 512 || tokens.IDs[0] != 0 || tokens.IDs[len(tokens.IDs)-1] != 2 || math.Abs(score.Score-1/(1+math.Exp(-1))) > 1e-7 {
+	if info.Info == nil || info.Info.ManifestSHA256 != pin || len(tokens.IDs) == 0 || len(tokens.IDs) > 512 || tokens.IDs[0] != 0 || tokens.IDs[len(tokens.IDs)-1] != 2 || score.Score == nil || math.Abs(*score.Score-1/(1+math.Exp(-1))) > 1e-7 {
 		t.Fatalf("bad worker output: %+v %+v %+v", info, tokens, score)
 	}
 	// Pin failure is observable before model parsing, not a fabricated zero score.

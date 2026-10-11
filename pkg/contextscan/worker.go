@@ -37,10 +37,10 @@ type Request struct {
 	Text string `json:"text"`
 }
 type Response struct {
-	Info  *Info   `json:"info,omitempty"`
-	IDs   []int   `json:"ids,omitempty"`
-	Score float64 `json:"score,omitempty"`
-	Error string  `json:"error,omitempty"`
+	Info  *Info    `json:"info,omitempty"`
+	IDs   []int    `json:"ids,omitempty"`
+	Score *float64 `json:"score,omitempty"`
+	Error string   `json:"error,omitempty"`
 }
 
 func Open(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
@@ -67,7 +67,10 @@ func (w *Worker) Tokens(ctx context.Context, s string) ([]int, error) {
 }
 func (w *Worker) Score(ctx context.Context, s string) (float64, error) {
 	r, e := w.call(ctx, Request{Mode: "score", Text: s})
-	return r.Score, e
+	if e != nil {
+		return 0, e
+	}
+	return *r.Score, nil
 }
 func (w *Worker) start() error {
 	w.cmd = exec.Command(w.cfg.Executable, "context-worker", "-bundle", w.cfg.Bundle, "-library", w.cfg.Library, "-manifest-sha256", w.cfg.ManifestSHA256)
@@ -166,6 +169,10 @@ func (w *Worker) call(ctx context.Context, req Request) (Response, error) {
 	if got.r.Error != "" {
 		w.stop()
 		return Response{}, fmt.Errorf("context worker: %s", got.r.Error)
+	}
+	if req.Mode == "score" && got.r.Score == nil || req.Mode == "tokens" && len(got.r.IDs) == 0 {
+		w.stop()
+		return Response{}, fmt.Errorf("context worker missing result")
 	}
 	if req.Mode == "info" {
 		if got.r.Info == nil || got.r.Info.ManifestSHA256 != strings.ToLower(w.cfg.ManifestSHA256) {

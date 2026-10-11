@@ -105,7 +105,9 @@ func Serve(dir, library, pin string, in io.Reader, out io.Writer) (err error) {
 				if len(encoded.Ids) > m.Contract.MaxTokens {
 					return fail("token window exceeded; no truncation")
 				}
-				reply.Score, e = infer(session, encoded.Ids)
+				var score float64
+				score, e = infer(session, encoded.Ids)
+				reply.Score = &score
 				if e != nil {
 					return fail("inference failed")
 				}

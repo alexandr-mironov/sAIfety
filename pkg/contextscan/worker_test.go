@@ -30,7 +30,11 @@ func init() {
 		if req.Text == "crash" {
 			os.Exit(3)
 		}
-		reply := Response{Score: .75, IDs: []int{0, 1, 2}}
+		value := .75
+		reply := Response{Score: &value, IDs: []int{0, 1, 2}}
+		if req.Text == "empty" {
+			reply = Response{}
+		}
 		if req.Mode == "info" {
 			reply = Response{Info: &Info{ID: "test", Version: "1", ManifestSHA256: strings.Repeat("a", 64), MaxTokens: 512, Threshold: .3}}
 		}
@@ -71,6 +75,9 @@ func TestWorkerCancellationReapsAndRestarts(t *testing.T) {
 	}
 	if _, e = w.Score(ctx2, "crash"); e == nil {
 		t.Fatal("crash returned success")
+	}
+	if _, e = w.Score(ctx2, "empty"); e == nil {
+		t.Fatal("missing score accepted as zero")
 	}
 	if ids, e := w.Tokens(ctx2, "okay"); e != nil || len(ids) != 3 {
 		t.Fatal(ids, e)
