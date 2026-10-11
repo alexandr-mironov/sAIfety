@@ -1,0 +1,382 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "<s>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1,
+      "content": "<pad>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 2,
+      "content": "</s>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 3,
+      "content": "<unk>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": {
+    "type": "Sequence",
+    "normalizers": [
+      {
+        "type": "Precompiled",
+        "precompiled_charsmap": "AAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      },
+      {
+        "type": "Replace",
+        "pattern": {
+          "Regex": " {2,}"
+        },
+        "content": " "
+      }
+    ]
+  },
+  "pre_tokenizer": {
+    "type": "Metaspace",
+    "replacement": "▁",
+    "prepend_scheme": "always",
+    "split": true
+  },
+  "post_processor": {
+    "type": "TemplateProcessing",
+    "single": [
+      {
+        "SpecialToken": {
+          "id": "<s>",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "SpecialToken": {
+          "id": "</s>",
+          "type_id": 0
+        }
+      }
+    ],
+    "pair": [
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "B",
+          "type_id": 1
+        }
+      }
+    ],
+    "special_tokens": {
+      "</s>": {
+        "id": "</s>",
+        "ids": [
+          2
+        ],
+        "tokens": [
+          "</s>"
+        ]
+      },
+      "<s>": {
+        "id": "<s>",
+        "ids": [
+          0
+        ],
+        "tokens": [
+          "<s>"
+        ]
+      }
+    }
+  },
+  "decoder": null,
+  "model": {
+    "type": "Unigram",
+    "unk_id": 3,
+    "vocab": [
+      [
+        "<s>",
+        0.0
+      ],
+      [
+        "<pad>",
+        0.0
+      ],
+      [
+        "</s>",
+        0.0
+      ],
+      [
+        "<unk>",
+        0.0
+      ],
+      [
+        "e",
+        -2.8623142689726713
+      ],
+      [
+        "▁",
+        -3.062314278927939
+      ],
+      [
+        "r",
+        -3.312240989226366
+      ],
+      [
+        "d",
+        -3.314368066628664
+      ],
+      [
+        "\":\"",
+        -3.3183070063449804
+      ],
+      [
+        "o",
+        -3.6283444489685994
+      ],
+      [
+        "c",
+        -3.644007763918767
+      ],
+      [
+        "s",
+        -3.6455456324807307
+      ],
+      [
+        "a",
+        -3.6456476122100714
+      ],
+      [
+        "l",
+        -3.6456476123266848
+      ],
+      [
+        "\",\"t",
+        -4.0098470477866135
+      ],
+      [
+        "u",
+        -4.124061697407854
+      ],
+      [
+        "m",
+        -4.124224795405933
+      ],
+      [
+        "-",
+        -4.14564761228687
+      ],
+      [
+        "k",
+        -4.14564761228687
+      ],
+      [
+        "i",
+        -4.14564761228687
+      ],
+      [
+        "}",
+        -4.145647612326682
+      ],
+      [
+        "с",
+        -4.145647612326685
+      ],
+      [
+        "▁caf",
+        -4.145647612477376
+      ],
+      [
+        "{\"",
+        -4.1456476975844385
+      ],
+      [
+        "cont",
+        -4.148331178413657
+      ],
+      [
+        "um",
+        -4.167525808928789
+      ],
+      [
+        "ext",
+        -4.281475912658895
+      ],
+      [
+        "\",\"",
+        -4.302120035895528
+      ],
+      [
+        "n",
+        -4.456065646680388
+      ],
+      [
+        "nt",
+        -4.5699899435425975
+      ],
+      [
+        "trust",
+        -4.961541518104932
+      ],
+      [
+        "\"",
+        -5.107319600358931
+      ],
+      [
+        ":",
+        -5.129094389610993
+      ],
+      [
+        "\":",
+        -5.1431876282787385
+      ],
+      [
+        "t\":\"",
+        -5.145223480632629
+      ],
+      [
+        "р",
+        -5.145647612286736
+      ],
+      [
+        "p",
+        -5.145647612286818
+      ],
+      [
+        "v",
+        -5.145647612286911
+      ],
+      [
+        "S",
+        -5.145647612286911
+      ],
+      [
+        "j",
+        -5.145647612286911
+      ],
+      [
+        "z",
+        -5.145647612286911
+      ],
+      [
+        "[",
+        -5.145647612286911
+      ],
+      [
+        "2",
+        -5.145647612286911
+      ],
+      [
+        "q",
+        -5.1456476123266786
+      ],
+      [
+        "y",
+        -5.145647612326685
+      ],
+      [
+        "文",
+        -5.145647612326685
+      ],
+      [
+        "]",
+        -5.145647612326685
+      ],
+      [
+        "w",
+        -5.145647612326685
+      ],
+      [
+        "у",
+        -5.145647612326685
+      ],
+      [
+        "к",
+        -5.145647612326685
+      ],
+      [
+        "h",
+        -5.145647612326685
+      ],
+      [
+        "й",
+        -5.145647612326685
+      ],
+      [
+        "é",
+        -5.145647612326685
+      ],
+      [
+        "中",
+        -5.145647612326685
+      ],
+      [
+        "́",
+        -5.145647612326685
+      ],
+      [
+        "и",
+        -5.145647612326685
+      ],
+      [
+        "on",
+        -5.213499577584836
+      ],
+      [
+        "f",
+        -5.365926049271478
+      ],
+      [
+        "x",
+        -5.366026049271478
+      ],
+      [
+        ",",
+        -5.366126049271478
+      ],
+      [
+        "{",
+        -5.366226049271479
+      ],
+      [
+        "t",
+        -5.366326049271478
+      ],
+      [
+        "rust",
+        -5.366326049271478
+      ]
+    ],
+    "byte_fallback": false
+  }
+}

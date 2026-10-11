@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "saifety-contextual-e5-v4",
+  "version": "v4-onnx-fp32-1",
+  "format": "onnx-fp32-opset17",
+  "production_ready": false,
+  "contract": {
+    "input_contract": "context-json-v2",
+    "serialization": "preserve-validated-json-utf8-v1",
+    "prefix": "query: ",
+    "normalization": "tokenizer.json-only",
+    "max_tokens": 512,
+    "overflow": "error",
+    "labels": {
+      "0": "benign",
+      "1": "attack-on-agent"
+    },
+    "attack_index": 1,
+    "pooling": "masked-mean-l2-normalized",
+    "inputs": [
+      "input_ids",
+      "attention_mask"
+    ],
+    "outputs": [
+      "logits"
+    ]
+  },
+  "calibration": {
+    "threshold": 0.3,
+    "decision": "score >= threshold",
+    "method": "synthetic plumbing fixture",
+    "thresholds_sha256": "e169ed57152bb5da14511ee8c0351697bd9a6910b4261ed5eb9fc1e9655d0468"
+  },
+  "provenance": {
+    "purpose": "synthetic integration fixture, not E5 weights or quality evidence"
+  },
+  "limitations": [
+    "constant logits; no semantic classifier"
+  ],
+  "files": {
+    "candidate.json": "b926835d8a52835d49f317735c9e1009cc2b6d55b726f21188447a05c6e50b13",
+    "tokenizer.json": "a0e7ddb2e1a1efd6917748986f04055ec7bc5a382621a09823bf5329beb670a9",
+    "model.onnx": "30ce1d47ce6764a92c1d90f8364985c8e66e05a19939665043d554a785d1aef7",
+    "thresholds-before-test.json": "e169ed57152bb5da14511ee8c0351697bd9a6910b4261ed5eb9fc1e9655d0468"
+  }
+}

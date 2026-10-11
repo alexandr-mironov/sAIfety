@@ -16,6 +16,7 @@ import (
 	"github.com/saifety-org/sAIfety/internal/scan"
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
 	"github.com/saifety-org/sAIfety/internal/stats"
+	"github.com/saifety-org/sAIfety/pkg/contextscan"
 )
 
 // Separator joins upstream server name and tool name in the aggregated
@@ -33,6 +34,8 @@ type Blocklist interface {
 
 // Proxy is the aggregating MCP server the agent talks to.
 type Proxy struct {
+	// Context observes raw tool results only; it cannot change transport policy.
+	Context   *contextscan.Observer
 	Scanner   *scan.Scanner
 	Specs     map[string]ServerSpec
 	Trusted   map[string]bool

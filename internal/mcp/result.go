@@ -13,6 +13,7 @@ import (
 	"github.com/saifety-org/sAIfety/internal/sanitize"
 	"github.com/saifety-org/sAIfety/internal/scan"
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
+	"github.com/saifety-org/sAIfety/pkg/contextscan"
 )
 
 const (
@@ -48,6 +49,14 @@ func (p *Proxy) scanToolResult(ctx context.Context, source string, trusted bool,
 	}
 	doc := &scan.Document{Source: source, Kind: scan.KindToolResult, Raw: text.String(), Trusted: trusted}
 	v := p.Scanner.Scan(ctx, doc)
+	if ctx.Err() != nil {
+		return withheldResult("tool result inspection interrupted")
+	}
+	// An allowlisted upstream does not grant instruction authority. Observe all
+	// textual fields already inspected by the bounded MCP walker, before rewriting.
+	if p.Context != nil && strings.TrimSpace(text.String()) != "" {
+		p.Context.Observe(ctx, []contextscan.Document{{Kind: "mcp", Trust: "untrusted", Text: text.String(), Source: source}})
+	}
 	if ctx.Err() != nil {
 		return withheldResult("tool result inspection interrupted")
 	}

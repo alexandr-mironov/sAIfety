@@ -12,10 +12,11 @@ import (
 // Config is saifety.json. The mcpServers block is byte-compatible with
 // Claude Code's .mcp.json so an existing file can be reused as-is.
 type Config struct {
-	MCPServers     map[string]mcp.ServerSpec `json:"mcpServers"`
-	TrustedSources []string                  `json:"trustedSources"`
-	MaxDecodeDepth int                       `json:"maxDecodeDepth"`
-	MaxFileSize    int64                     `json:"maxFileSize"`
+	ExperimentalContext ContextConfig             `json:"experimentalContext"`
+	MCPServers          map[string]mcp.ServerSpec `json:"mcpServers"`
+	TrustedSources      []string                  `json:"trustedSources"`
+	MaxDecodeDepth      int                       `json:"maxDecodeDepth"`
+	MaxFileSize         int64                     `json:"maxFileSize"`
 	// ClaudeBinary overrides the `claude` executable used by launch.
 	ClaudeBinary string `json:"claudeBinary"`
 	// Classifier selects "trained" (default, embedded model), "lexical"

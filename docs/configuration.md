@@ -325,3 +325,10 @@ JSON, ошибке чтения или блокировки доступ не р
 
 Перед изменением создаётся резервная копия; `saifety uninstall` восстанавливает её.
 Клиент применяет изменения после перезапуска. Всегда сначала запускай с `-dry-run`.
+
+## Experimental contextual model
+
+Optional `experimentalContext` enables advisory Go/ONNX inference alongside the
+existing classifier. It is off by default and cannot change blocking decisions.
+See [contextual inference](contextual-inference.md) for local artifact pins, the
+JSON API, explicit operator task in MCP/hooks, segmentation, limits and errors.

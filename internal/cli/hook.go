@@ -15,6 +15,7 @@ import (
 func runHook(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	task := fs.String("task", "", "operator-supplied user task for experimental contextual shadow inference")
 	cfgPath := fs.String("config", DefaultConfigPath(), "config file")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
@@ -47,6 +48,17 @@ func runHook(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
 		fmt.Fprintln(stderr, "hook input:", err)
 		return ExitError
+	}
+	// PreToolUse is enforced independently of the optional observer. A broken
+	// shadow configuration/backend must never turn blocking into a hook error.
+	if args[0] == "session-start" || args[0] == "post-tool-use" {
+		observer, closeContext, contextErr := contextObserver(ctx, cfg.ExperimentalContext, *task, stderr)
+		if contextErr != nil {
+			fmt.Fprintln(stderr, "context:", contextErr)
+		} else {
+			h.Context = observer
+			defer closeContext()
+		}
 	}
 	var out hook.Output
 	switch args[0] {

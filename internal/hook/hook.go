@@ -18,6 +18,7 @@ import (
 	"github.com/saifety-org/sAIfety/internal/scan"
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
 	"github.com/saifety-org/sAIfety/internal/stats"
+	"github.com/saifety-org/sAIfety/pkg/contextscan"
 )
 
 // Input is the common part of every hook payload.
@@ -38,6 +39,7 @@ type Output struct {
 
 // Handler holds the dependencies shared by all events.
 type Handler struct {
+	Context   *contextscan.Observer
 	Scanner   *scan.Scanner
 	Blocklist *policy.Blocklist
 	// Redact masks secrets and personal data in tool outputs. RedactOn gates it.
@@ -64,6 +66,7 @@ func (h *Handler) SessionStart(ctx context.Context, in Input) (Output, error) {
 	rules, _ := filepath.Glob(filepath.Join(in.Cwd, ".claude", "rules", "*.md"))
 	paths = append(paths, rules...)
 
+	var contextDocs []contextscan.Document
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -80,6 +83,9 @@ func (h *Handler) SessionStart(ctx context.Context, in Input) (Output, error) {
 				continue
 			}
 		}
+		if h.Context != nil && strings.TrimSpace(string(raw)) != "" {
+			contextDocs = append(contextDocs, contextscan.Document{Kind: "file", Trust: "untrusted", Text: string(raw), Source: rel})
+		}
 		v := h.Scanner.Scan(ctx, &scan.Document{Source: rel, Kind: scan.KindInstructions, Raw: string(raw)})
 		h.Stats.Record(v)
 		if v.Action == scan.ActionBlock && h.Blocklist != nil {
@@ -88,6 +94,9 @@ func (h *Handler) SessionStart(ctx context.Context, in Input) (Output, error) {
 			}
 		}
 		fmt.Fprintf(&b, "\n# Project instructions from %s (verified by sAIfety: %s)\n\n%s\n", rel, v.Level, sanitize.Apply(string(raw), v))
+	}
+	if len(contextDocs) > 0 {
+		h.Context.Observe(ctx, contextDocs)
 	}
 	if b.Len() == 0 {
 		return Output{}, nil
@@ -185,6 +194,11 @@ func (h *Handler) PostToolUse(ctx context.Context, in Input) (Output, error) {
 		}
 		return out
 	})
+	// The official hook payload has no authorized user task. Observe the raw JSON
+	// as data; tool_input/tool_response must never populate Observer.Task.
+	if h.Context != nil && strings.TrimSpace(string(in.ToolResponse)) != "" {
+		h.Context.Observe(ctx, []contextscan.Document{{Kind: inputKind(in.ToolInput), Trust: "untrusted", Text: string(in.ToolResponse), Source: source}})
+	}
 	if !changed {
 		return Output{}, nil
 	}
@@ -239,4 +253,19 @@ func uniq(in []string) []string {
 		}
 	}
 	return out
+}
+
+// Kind follows available provenance; no classification of the claimed content.
+func inputKind(raw json.RawMessage) string {
+	var input map[string]any
+	_ = json.Unmarshal(raw, &input)
+	for _, key := range []string{"file_path", "path", "notebook_path"} {
+		if s, _ := input[key].(string); s != "" {
+			return "file"
+		}
+	}
+	if s, _ := input["url"].(string); s != "" {
+		return "web"
+	}
+	return "mcp"
 }

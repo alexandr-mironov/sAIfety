@@ -181,3 +181,7 @@ at the call site; file writes and the final write-side close remain checked.
 The application build checks native ONNX, pure-Go lite, and all five release
 targets: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64.
 A `v*` tag reuses the same CI workflow before publishing any release assets.
+
+Experimental contextual E5 inference is available through the Go API and
+`saifety context`, with advisory MCP/hook observation. It is opt-in and does not
+change the default protection policy. See [configuration and limits](docs/contextual-inference.md).
