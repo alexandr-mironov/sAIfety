@@ -15,6 +15,7 @@ import (
 func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	task := fs.String("task", "", "operator-supplied user task for experimental contextual shadow inference")
 	cfgPath := fs.String("config", DefaultConfigPath(), "config with mcpServers (compatible with .mcp.json)")
 	statePath := fs.String("state", policy.DefaultBlocklistPath(), "blocklist state file")
 	if err := fs.Parse(args); err != nil {
@@ -29,6 +30,12 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "no mcpServers in", *cfgPath)
 		return ExitUsage
 	}
+	observer, closeContext, err := contextObserver(ctx, cfg.ExperimentalContext, *task, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "context:", err)
+		return ExitError
+	}
+	defer closeContext()
 	bl, err := policy.LoadBlocklist(*statePath)
 	if err != nil {
 		fmt.Fprintln(stderr, "state:", err)
@@ -45,6 +52,7 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		trusted[t] = true
 	}
 	p := &mcp.Proxy{
+		Context:     observer,
 		Scanner:     newScanner(cfg, true),
 		DescScanner: NewDescScanner(cfg),
 		Specs:       cfg.MCPServers,

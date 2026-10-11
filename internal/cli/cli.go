@@ -25,6 +25,7 @@ const (
 const usage = `saifety — предварительный анализ вводных данных для агентов
 
 Usage:
+  saifety context [-config f]         experimental contextual JSON from stdin
   saifety scan   [flags] [path...]      scan files or directories
   saifety proxy  [flags]                run MCP aggregating proxy over stdio
   saifety hook   <event>                Claude Code hook adapter (stdin JSON)
@@ -46,6 +47,10 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "context":
+		return runContext(ctx, rest, stdin, stdout, stderr)
+	case "context-worker":
+		return runContextWorker(rest, stdin, stdout, stderr)
 	case "scan":
 		return runScan(ctx, rest, stdout, stderr)
 	case "proxy":
