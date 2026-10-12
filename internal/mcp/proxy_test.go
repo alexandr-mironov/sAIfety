@@ -106,13 +106,16 @@ func (c *client) call(t *testing.T, method string, params any) json.RawMessage {
 	}
 }
 
-func startProxy(t *testing.T) (*client, *memBlocklist) {
+func startProxy(t *testing.T, decisionLog ...io.Writer) (*client, *memBlocklist) {
 	t.Helper()
 	bl := &memBlocklist{m: map[string]string{}}
 	p := &Proxy{
 		Scanner:   scan.New(detect.Default(), policy.New(policy.Default), scan.Options{}),
 		Specs:     map[string]ServerSpec{"fake": {Command: os.Args[0], Env: map[string]string{"SAIFETY_FAKE_UPSTREAM": "1"}}},
 		Blocklist: bl,
+	}
+	if len(decisionLog) != 0 {
+		p.DecisionLog = decisionLog[0]
 	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()

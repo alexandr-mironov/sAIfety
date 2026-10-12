@@ -27,10 +27,17 @@ const (
 // a flagged result wholesale prevents an uncleaned copy surviving in another
 // field and avoids claiming that rewritten JSON still satisfies outputSchema.
 func (p *Proxy) scanToolResult(ctx context.Context, source string, trusted bool, raw json.RawMessage) any {
+	result, _ := p.inspectToolResult(ctx, source, trusted, raw)
+	return result
+}
+
+func (p *Proxy) inspectToolResult(ctx context.Context, source string, trusted bool, raw json.RawMessage) (output any, decision Decision) {
+	decision = Decision{Action: "withhold", Delivery: "withheld", Reason: "inspection_unavailable", Scope: "result"}
 	result, err := parseToolResult(raw)
 	if err != nil {
 		p.logf("tool result withheld for %s: %v", source, err)
-		return withheldResult("invalid tool result or inspection limit exceeded")
+		decision.Reason = "invalid_or_limited_result"
+		return withheldResult("invalid tool result or inspection limit exceeded"), decision
 	}
 	var text strings.Builder
 	err = walkResult(result, resultRoot, func(s string, _ bool) (string, error) {
@@ -42,15 +49,17 @@ func (p *Proxy) scanToolResult(ctx context.Context, source string, trusted bool,
 		return s, nil
 	})
 	if err != nil {
-		return withheldResult("tool result text exceeds inspection limit")
+		decision.Reason = "text_limit"
+		return withheldResult("tool result text exceeds inspection limit"), decision
 	}
 	if ctx.Err() != nil || p.Scanner == nil {
-		return withheldResult("tool result inspection unavailable")
+		return withheldResult("tool result inspection unavailable"), decision
 	}
 	doc := &scan.Document{Source: source, Kind: scan.KindToolResult, Raw: text.String(), Trusted: trusted}
 	v := p.Scanner.Scan(ctx, doc)
 	if ctx.Err() != nil {
-		return withheldResult("tool result inspection interrupted")
+		decision.Reason = "inspection_interrupted"
+		return withheldResult("tool result inspection interrupted"), decision
 	}
 	// An allowlisted upstream does not grant instruction authority. Observe all
 	// textual fields already inspected by the bounded MCP walker, before rewriting.
@@ -58,19 +67,23 @@ func (p *Proxy) scanToolResult(ctx context.Context, source string, trusted bool,
 		p.Context.Observe(ctx, []contextscan.Document{{Kind: "mcp", Trust: "untrusted", Text: text.String(), Source: source}})
 	}
 	if ctx.Err() != nil {
-		return withheldResult("tool result inspection interrupted")
+		decision.Reason = "inspection_interrupted"
+		return withheldResult("tool result inspection interrupted"), decision
 	}
+	decision = verdictDecision(v)
 	p.Stats.Record(v)
 	if v.Action == scan.ActionBlock {
 		p.block(source, fmt.Sprintf("%s in tool result", v.Level))
-		return blockedResult(source)
+		decision.Delivery, decision.Scope = "withheld", "tool"
+		return blockedResult(), decision
 	}
 	if v.Action != scan.ActionPass {
 		// Findings refer to the normalized document, not raw JSON offsets.
-		return withheldResultText(p.redactResultText(sanitize.Apply(doc.Text, v)))
+		decision.Delivery = "transformed"
+		return withheldResultText(p.redactResultText(sanitize.Apply(doc.Text, v))), decision
 	}
 	if !p.RedactOn {
-		return raw // Preserve numbers, extensions, annotations and formatting.
+		return raw, decision // Preserve numbers, extensions, annotations and formatting.
 	}
 	changed, protectedChanged := false, false
 	err = walkResult(result, resultRoot, func(s string, protected bool) (string, error) {
@@ -85,15 +98,18 @@ func (p *Proxy) scanToolResult(ctx context.Context, source string, trusted bool,
 		return masked, nil
 	})
 	if err != nil {
-		return withheldResult("tool result redaction failed")
+		decision.Action, decision.Delivery, decision.Reason = "withhold", "withheld", "redaction_error"
+		return withheldResult("tool result redaction failed"), decision
 	}
 	if protectedChanged {
-		return withheldResultText("[sAIfety] Sensitive JSON key or protocol field; result withheld.\n" + p.redactResultText(doc.Raw))
+		decision.Delivery, decision.Reason = "transformed", "protected_field_redacted"
+		return withheldResultText("[sAIfety] Sensitive JSON key or protocol field; result withheld.\n" + p.redactResultText(doc.Raw)), decision
 	}
 	if changed {
-		return result
+		decision.Delivery, decision.Reason = "transformed", "redacted"
+		return result, decision
 	}
-	return raw
+	return raw, decision
 }
 
 func (p *Proxy) redactResultText(s string) string {

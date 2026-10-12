@@ -41,6 +41,9 @@ type Proxy struct {
 	Trusted   map[string]bool
 	Blocklist Blocklist
 	Log       *log.Logger
+	// DecisionLog is an opt-in operator JSONL stream, separate from MCP stdout.
+	DecisionLog io.Writer
+	decisionMu  sync.Mutex
 	// Redact masks secrets and personal data in tool results and
 	// descriptions before the agent sees them. RedactOn gates it.
 	Redact   redact.Options
@@ -384,6 +387,8 @@ func (p *Proxy) scanDescription(ctx context.Context, source, raw string, trusted
 }
 
 func (p *Proxy) toolsCall(ctx context.Context, req *Message) *Message {
+	d := Decision{Action: "withhold", Delivery: "withheld", Reason: "invalid_request", Scope: "result"}
+	defer func() { p.recordDecision(req.ID, d) }()
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -399,10 +404,12 @@ func (p *Proxy) toolsCall(ctx context.Context, req *Message) *Message {
 	blocked, err := p.checkBlocked(server, source)
 	if err != nil {
 		p.logf("blocklist: %v", err)
+		d.Reason = "state_unavailable"
 		return Reply(req, withheldResult("blocklist state unavailable"))
 	}
 	if blocked {
-		return Reply(req, blockedResult(source))
+		d.Action, d.Reason, d.Scope = "block", "quarantine", "source"
+		return Reply(req, blockedResult())
 	}
 	p.mu.Lock()
 	u := p.upstreams[server]
@@ -414,26 +421,32 @@ func (p *Proxy) toolsCall(ctx context.Context, req *Message) *Message {
 		p.mu.Unlock()
 	}
 	if u == nil {
+		d.Reason = "upstream_unavailable"
 		return Fail(req, CodeInvalidParams, "server "+server+" is not available")
 	}
 
+	d.UpstreamCalled = true
 	res, err := u.Call(ctx, "tools/call", map[string]any{"name": tool, "arguments": params.Arguments})
 	if err != nil {
+		d.Reason = "upstream_error"
 		if rpc, ok := err.(*RPCError); ok {
 			return &Message{ID: req.ID, Error: rpc}
 		}
 		return Fail(req, CodeInternal, err.Error())
 	}
 
-	return Reply(req, p.scanToolResult(ctx, source, p.Trusted[server], res))
+	result, inspected := p.inspectToolResult(ctx, source, p.Trusted[server], res)
+	d = inspected
+	d.UpstreamCalled = true
+	return Reply(req, result)
 }
 
-func blockedResult(source string) map[string]any {
+func blockedResult() map[string]any {
 	return map[string]any{
 		"isError": true,
 		"content": []map[string]string{{
 			"type": "text",
-			"text": "[sAIfety] source " + source + " is blocked. Ask the user for explicit manual confirmation to unblock it.",
+			"text": "[sAIfety] Tool result unavailable: source quarantined by security policy.",
 		}},
 	}
 }
