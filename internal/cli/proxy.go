@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 
 	"github.com/saifety-org/sAIfety/internal/mcp"
 	"github.com/saifety-org/sAIfety/internal/policy"
@@ -18,6 +19,7 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	task := fs.String("task", "", "operator-supplied user task for experimental contextual shadow inference")
 	cfgPath := fs.String("config", DefaultConfigPath(), "config with mcpServers (compatible with .mcp.json)")
 	statePath := fs.String("state", policy.DefaultBlocklistPath(), "blocklist state file")
+	decisionPath := fs.String("decision-log", "", "new private operator JSONL file for payload-free decisions (optional)")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -29,6 +31,21 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if len(cfg.MCPServers) == 0 {
 		fmt.Fprintln(stderr, "no mcpServers in", *cfgPath)
 		return ExitUsage
+	}
+	var decisions io.Writer
+	if *decisionPath != "" {
+		// Refuse overwrite/symlinks and never place diagnostics on MCP stdout.
+		file, err := os.OpenFile(*decisionPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			fmt.Fprintln(stderr, "decision log: cannot create a new file")
+			return ExitError
+		}
+		defer func() {
+			if err := file.Close(); err != nil {
+				fmt.Fprintln(stderr, "decision log: close failed")
+			}
+		}()
+		decisions = file
 	}
 	observer, closeContext, err := contextObserver(ctx, cfg.ExperimentalContext, *task, stderr)
 	if err != nil {
@@ -63,6 +80,7 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		RedactOn:    RedactEnabled(cfg),
 		Pins:        pins,
 		Stats:       st,
+		DecisionLog: decisions,
 	}
 	if err := p.Serve(ctx, stdin, stdout); err != nil {
 		fmt.Fprintln(stderr, "proxy:", err)
