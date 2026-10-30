@@ -48,6 +48,8 @@ type Proxy struct {
 	// descriptions before the agent sees them. RedactOn gates it.
 	Redact   redact.Options
 	RedactOn bool
+	// AllowOpaque explicitly bypasses PII inspection of protocol binary data.
+	AllowOpaque bool
 	// Pins detects tool "rug pulls" (definitions changed after first sight).
 	Pins Pinner
 	// Stats records detected-threat counters (nil-safe).
@@ -326,6 +328,10 @@ func (p *Proxy) toolsList(ctx context.Context, req *Message) *Message {
 		raw := t.Description + "\n" + string(t.InputSchema)
 		v := p.scanDescription(ctx, source, raw, p.Trusted[name])
 		p.Stats.Record(v)
+		if p.RedactOn && hiddenPrivacy(v) {
+			p.logf("encoded tool definition withheld by PII policy")
+			continue
+		}
 		if v.Action != scan.ActionPass {
 			t.Description = sanitize.Apply(t.Description, v)
 		}
@@ -347,7 +353,12 @@ func (p *Proxy) toolsList(ctx context.Context, req *Message) *Message {
 			t.Description = annotateDescription(t.Description, warns)
 		}
 		if p.RedactOn {
-			t.Description = redact.Mask(t.Description, redact.Find(t.Description, p.Redact))
+			var safe bool
+			t, safe = p.redactTool(ctx, t)
+			if !safe {
+				p.logf("tool definition withheld by PII policy")
+				continue
+			}
 		}
 		t.Name = name + Separator + t.Name
 		tools = append(tools, t)
@@ -429,6 +440,9 @@ func (p *Proxy) toolsCall(ctx context.Context, req *Message) *Message {
 	res, err := u.Call(ctx, "tools/call", map[string]any{"name": tool, "arguments": params.Arguments})
 	if err != nil {
 		d.Reason = "upstream_error"
+		if p.RedactOn {
+			return Fail(req, CodeInternal, "upstream tool failed; error details withheld by PII policy")
+		}
 		if rpc, ok := err.(*RPCError); ok {
 			return &Message{ID: req.ID, Error: rpc}
 		}

@@ -78,6 +78,7 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		Log:         log.New(stderr, "saifety: ", log.Ltime), // stdout is the protocol channel
 		Redact:      RedactOptions(cfg, true),
 		RedactOn:    RedactEnabled(cfg),
+		AllowOpaque: cfg.Redact.AllowOpaque,
 		Pins:        pins,
 		Stats:       st,
 		DecisionLog: decisions,

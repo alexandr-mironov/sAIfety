@@ -2,6 +2,7 @@ package redact
 
 import (
 	"math"
+	"net/netip"
 	"regexp"
 	"strings"
 	"unicode"
@@ -20,20 +21,20 @@ type pattern struct {
 // name stays visible).
 var patterns = []pattern{
 	// --- secrets / tokens ---
-	{KindSecret, "aws_access_key", regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`), 0.95, nil},
+	{KindSecret, "aws_access_key", regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), 0.95, nil},
 	{KindSecret, "aws_secret_key", regexp.MustCompile(`(?i)aws_secret_access_key\s*[:=]\s*["']?([A-Za-z0-9/+]{40})`), 0.9, nil},
-	{KindSecret, "github_token", regexp.MustCompile(`\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,255}\b`), 0.95, nil},
+	{KindSecret, "github_token", regexp.MustCompile(`\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,255}\b`), 0.95, nil},
 	{KindSecret, "gitlab_token", regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}\b`), 0.9, nil},
 	{KindSecret, "slack_token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`), 0.9, nil},
 	{KindSecret, "google_api_key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`), 0.9, nil},
-	{KindSecret, "stripe_key", regexp.MustCompile(`\b(sk|rk)_(live|test)_[A-Za-z0-9]{16,}\b`), 0.95, nil},
+	{KindSecret, "stripe_key", regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b`), 0.95, nil},
 	{KindSecret, "openai_key", regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}\b`), 0.7, nil},
 	{KindSecret, "private_key", regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), 0.98, nil},
 	{KindSecret, "jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`), 0.9, nil},
-	{KindSecret, "generic_secret", regexp.MustCompile(`(?i)\b(api[_-]?key|secret|token|passwd|password|access[_-]?key)\b\s*[:=]\s*["']([^"'\s]{8,})["']`), 0.6, nil},
+	{KindSecret, "generic_secret", regexp.MustCompile(`(?i)\b(?:api[_-]?key|secret|token|passwd|password|access[_-]?key)\b\s*[:=]\s*["']([^"'\s]{8,})["']`), 0.6, nil},
 
 	// --- auth ---
-	{KindAuth, "auth_header", regexp.MustCompile(`(?i)authorization\s*:\s*(bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})`), 0.85, nil},
+	{KindAuth, "auth_header", regexp.MustCompile(`(?i)authorization\s*:\s*(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})`), 0.85, nil},
 	{KindAuth, "url_credentials", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^/\s:@]+)@`), 0.8, nil},
 
 	// --- Russian full names (ФИО) ---
@@ -46,10 +47,38 @@ var patterns = []pattern{
 	{KindPII, "full_name", regexp.MustCompile(`(?:^|[\s(,:;«"'])([А-ЯЁ]\.\s?[А-ЯЁ]\.\s?[А-ЯЁ][а-яё]+)(?:$|[\s).,;:!?»"'])`), 0.7, nil},
 
 	// --- PII ---
-	{KindPII, "email", regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`), 0.9, nil},
+	{KindPII, "email", regexp.MustCompile(`[\p{L}\p{N}._%+\-]+@[\p{L}\p{N}.\-]+\.[\p{L}]{2,}`), 0.9, nil},
+	{KindPII, "email", regexp.MustCompile(`(?i)[\p{L}\p{N}._%+\-]+[ \t]*(?:\[at\]|\(at\)|[ \t]+at[ \t]+)[ \t]*[\p{L}\p{N}\-]+(?:[ \t]*(?:\[dot\]|\(dot\)|[ \t]+dot[ \t]+)[ \t]*[\p{L}\p{N}\-]+)+`), 0.8, nil},
 	{KindPII, "phone", regexp.MustCompile(`\+\d[\d ()-]{7,}\d|\b\d{2,4}[ ()-][\d ()-]{5,}\d\b`), 0.5, validPhone},
+	{KindPII, "phone", regexp.MustCompile(`\b(?:[78]\d{10}|[2-9]\d{9})\b`), 0.65, validPhone},
 	{KindPII, "credit_card", regexp.MustCompile(`\b(?:\d[ -]?){13,19}\b`), 0.9, validLuhn},
 	{KindPII, "ip", regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b`), 0.6, nil},
+	{KindPII, "ip", regexp.MustCompile(`[0-9A-Fa-f:]*:[0-9A-Fa-f:]+(?:%[A-Za-z0-9_.-]+)?`), 0.6, validIPv6},
+	{KindPII, "iban", regexp.MustCompile(`\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b`), 0.9, validIBAN},
+}
+
+func validIPv6(s string) bool {
+	addr, err := netip.ParseAddr(s)
+	return err == nil && addr.Is6()
+}
+
+func validIBAN(s string) bool {
+	s = strings.ReplaceAll(s, " ", "")
+	if len(s) < 15 || len(s) > 34 {
+		return false
+	}
+	remainder := 0
+	for _, r := range s[4:] + s[:4] {
+		switch {
+		case r >= '0' && r <= '9':
+			remainder = (remainder*10 + int(r-'0')) % 97
+		case r >= 'A' && r <= 'Z':
+			remainder = (remainder*100 + int(r-'A') + 10) % 97
+		default:
+			return false
+		}
+	}
+	return remainder == 1
 }
 
 // validLuhn checks the Luhn checksum so ordinary long digit runs aren't
