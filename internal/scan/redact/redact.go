@@ -6,9 +6,12 @@
 package redact
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/saifety-org/sAIfety/internal/scan/normalize"
 )
 
 // Kind labels what a match is, and drives the placeholder it is masked with.
@@ -41,7 +44,8 @@ type Options struct {
 	// token detection (bits per char). 0 disables entropy scanning.
 	MinEntropy float64
 	// ner, when set, is an optional model-based recognizer (see WithNER).
-	ner NER
+	ner    NER
+	nerErr error
 }
 
 // DefaultOptions enables the standard secret/PII set with entropy off (too
@@ -51,6 +55,22 @@ var DefaultOptions = Options{MaskIP: true, MinEntropy: 0}
 // Find returns all matches in text, sorted by position, de-overlapped so a
 // secret isn't also reported as generic entropy.
 func Find(text string, opts Options) []Match {
+	matches, _ := find(text, opts, false)
+	return matches
+}
+
+// FindChecked distinguishes an unavailable/failed enabled recognizer from a
+// completed inspection with no matches. Runtime output paths must use it.
+func FindChecked(text string, opts Options) (matches []Match, err error) {
+	defer func() {
+		if recover() != nil {
+			matches, err = nil, fmt.Errorf("PII inspection failed")
+		}
+	}()
+	return find(text, opts, true)
+}
+
+func find(text string, opts Options, checked bool) ([]Match, error) {
 	var out []Match
 	for _, p := range patterns {
 		if p.kind == KindPII && p.label == "ip" && !opts.MaskIP {
@@ -82,12 +102,50 @@ func Find(text string, opts Options) []Match {
 	// Context layer: names without a patronymic, disambiguated by a nearby
 	// phone/email. Runs on the matches found so far.
 	out = append(out, contextNames(text, out)...)
+	out = append(out, labelledMatches(text)...)
+	out = append(out, bareNames(text)...)
+	if checked && opts.nerErr != nil {
+		return nil, fmt.Errorf("PII recognizer unavailable")
+	}
 	// Model layer: a PII NER model catches remaining personal data.
 	if opts.ner != nil {
-		out = append(out, opts.ner.Recognize(text)...)
+		if n, ok := opts.ner.(CheckedNER); checked && ok {
+			modelMatches, err := n.RecognizeChecked(text)
+			if err != nil {
+				return nil, fmt.Errorf("PII recognizer failed")
+			}
+			out = append(out, modelMatches...)
+		} else {
+			out = append(out, opts.ner.Recognize(text)...)
+		}
+	}
+	for _, m := range out {
+		if m.Start < 0 || m.End > len(text) || m.End <= m.Start {
+			return nil, fmt.Errorf("invalid PII span")
+		}
 	}
 	out = filterAllowlisted(text, out, opts.Allowlist)
-	return dedupe(out)
+	return dedupe(out), nil
+}
+
+// Text fully hides detected values. Errors never produce an uninspected copy.
+func Text(text string, opts Options) (string, error) {
+	// Normalized offsets cannot be applied to the original bytes. Hide the
+	// whole value rather than letting invisibles/confusables retain a copy.
+	if normalized := normalize.Text(text); normalized != text {
+		matches, err := FindChecked(normalized, opts)
+		if err != nil {
+			return "", err
+		}
+		if len(matches) > 0 {
+			return Placeholder("normalized_pii"), nil
+		}
+	}
+	matches, err := FindChecked(text, opts)
+	if err != nil {
+		return "", err
+	}
+	return Mask(text, matches), nil
 }
 
 // Mask replaces every match with a typed placeholder, outermost first, so the
@@ -105,7 +163,7 @@ func Mask(text string, matches []Match) string {
 			continue
 		}
 		b.WriteString(text[pos:m.Start])
-		b.WriteString(maskValue(m.Label, text[m.Start:m.End]))
+		b.WriteString(Placeholder(m.Label))
 		pos = m.End
 	}
 	b.WriteString(text[pos:])
@@ -133,125 +191,32 @@ func filterAllowlisted(text string, in []Match, allow []string) []Match {
 	return out
 }
 
-// dedupe drops a match fully contained in another (prefer the more specific,
-// higher-confidence one).
+// dedupe merges overlapping matches. Skipping a crossing span would expose its
+// tail; containment alone is insufficient for a privacy boundary.
 func dedupe(in []Match) []Match {
 	sort.Slice(in, func(i, j int) bool {
 		if in[i].Start != in[j].Start {
 			return in[i].Start < in[j].Start
 		}
-		return in[i].End > in[j].End
+		if in[i].End != in[j].End {
+			return in[i].End > in[j].End
+		}
+		return in[i].Confidence > in[j].Confidence
 	})
 	var out []Match
 	for _, m := range in {
-		covered := false
-		for _, k := range out {
-			if m.Start >= k.Start && m.End <= k.End {
-				covered = true
-				break
+		if len(out) > 0 && m.Start < out[len(out)-1].End {
+			last := &out[len(out)-1]
+			if m.End > last.End {
+				last.End = m.End
 			}
+			continue
 		}
-		if !covered {
-			out = append(out, m)
-		}
+		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start < out[j].Start })
 	return out
 }
 
-// maskValue produces the masked form of one value. Personal data keeps a few
-// edge characters so the record stays readable, with a single "*" for the
-// hidden middle. Secrets and credentials are never shown partially.
-func maskValue(label, val string) string {
-	switch label {
-	case "phone":
-		return maskPhone(val)
-	case "ip":
-		return maskIPv4(val)
-	case "full_name":
-		return maskName(val)
-	case "email":
-		return maskEmail(val)
-	case "credit_card":
-		return maskCard(val)
-	default:
-		// secrets, auth, tokens, keywords, high-entropy, and any other type
-		// are fully hidden — a partial secret is still a leak.
-		return "[REDACTED:" + label + "]"
-	}
-}
-
-// maskPhone keeps a leading "+" (if present), the first 4 digits and the last
-// 2, hiding the middle with one "*": +7 916 555-01-32 -> +7916*32.
-func maskPhone(val string) string {
-	plus := strings.HasPrefix(strings.TrimSpace(val), "+")
-	var digits []rune
-	for _, r := range val {
-		if r >= '0' && r <= '9' {
-			digits = append(digits, r)
-		}
-	}
-	if len(digits) < 6 {
-		return "*"
-	}
-	head := string(digits[:4])
-	tail := string(digits[len(digits)-2:])
-	if plus {
-		head = "+" + head
-	}
-	return head + "*" + tail
-}
-
-// maskIPv4 keeps the first and last octet: 192.168.0.1 -> 192.*.*.1.
-func maskIPv4(val string) string {
-	parts := strings.Split(val, ".")
-	if len(parts) != 4 {
-		return "*"
-	}
-	return parts[0] + ".*.*." + parts[3]
-}
-
-// maskName keeps 2 letters of the first part and 1 letter of each other part,
-// each followed by a single "*": Иванов Иван Иванович -> Ив* И* И*.
-func maskName(val string) string {
-	fields := strings.Fields(val)
-	out := make([]string, 0, len(fields))
-	for i, f := range fields {
-		rs := []rune(f)
-		keep := 1
-		if i == 0 {
-			keep = 2
-		}
-		if len(rs) <= keep {
-			out = append(out, f)
-			continue
-		}
-		out = append(out, string(rs[:keep])+"*")
-	}
-	return strings.Join(out, " ")
-}
-
-// maskEmail keeps the first character of the local part and the domain:
-// john.doe@example.com -> j*@example.com.
-func maskEmail(val string) string {
-	at := strings.IndexByte(val, '@')
-	if at <= 0 {
-		return "*"
-	}
-	local := []rune(val[:at])
-	return string(local[:1]) + "*" + val[at:]
-}
-
-// maskCard keeps the last 4 digits: 4111 1111 1111 1111 -> *1111.
-func maskCard(val string) string {
-	var digits []rune
-	for _, r := range val {
-		if r >= '0' && r <= '9' {
-			digits = append(digits, r)
-		}
-	}
-	if len(digits) < 4 {
-		return "*"
-	}
-	return "*" + string(digits[len(digits)-4:])
-}
+// Placeholder never retains initials, domains, prefixes or suffixes.
+func Placeholder(label string) string { return "[REDACTED:" + label + "]" }

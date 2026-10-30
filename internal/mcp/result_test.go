@@ -173,8 +173,10 @@ func TestToolResultBinaryFieldsAreOpaqueOnlyAtProtocolLocations(t *testing.T) {
 		map[string]string{"type": "audio", "data": "AA==", "mimeType": "audio/wav"},
 		map[string]any{"type": "resource", "resource": map[string]string{"uri": "file:///binary", "blob": "AA=="}},
 	}})
+	assertWithheld(t, mustJSON(p.scanToolResult(context.Background(), "fake/echo", false, raw)))
+	p.AllowOpaque = true
 	if got := p.scanToolResult(context.Background(), "fake/echo", false, raw); !reflect.DeepEqual(got, raw) {
-		t.Fatal("opaque protocol binary data should pass unchanged")
+		t.Fatal("explicitly allowed opaque protocol binary data should pass unchanged")
 	}
 }
 

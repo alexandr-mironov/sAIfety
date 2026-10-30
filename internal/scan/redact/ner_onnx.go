@@ -17,8 +17,6 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-const nerMaxSeq = 512
-
 // onnxNER is a token-classification NER model for personal data. It works
 // with 2-input (DistilBERT) and 3-input (BERT with token_type_ids) models,
 // and maps BIO entity labels to redaction labels. Built only with -tags onnx.
@@ -71,6 +69,9 @@ func NewONNXNER(cfg NERConfig) (NER, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ner: tokenizer: %w", err)
 	}
+	// Coverage is controlled by nerWindows, not by tokenizer-side truncation.
+	tk.WithTruncation(nil)
+	tk.WithPadding(nil)
 	if err := onnxenv.Init(cfg.LibraryPath); err != nil {
 		return nil, fmt.Errorf("ner: runtime init: %w", err)
 	}
@@ -145,20 +146,40 @@ func loadLabels(path string) ([]string, error) {
 // Recognize runs the model and decodes BIO tags into masked spans. It never
 // panics: a tokenizer panic degrades to no model matches (heuristics still
 // apply).
-func (n *onnxNER) Recognize(text string) (out []Match) {
+func (n *onnxNER) Recognize(text string) []Match {
+	out, _ := n.RecognizeChecked(text)
+	return out
+}
+
+func (n *onnxNER) RecognizeChecked(text string) (out []Match, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = nil
+			out, err = nil, fmt.Errorf("NER inspection failed")
 		}
 	}()
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	en, terr := safeEncodeNER(n.tk, text)
 	if terr != nil || en == nil || len(en.Ids) == 0 {
-		return nil
+		return nil, fmt.Errorf("NER tokenization failed")
 	}
+	windows, err := nerWindows(en)
+	if err != nil {
+		return nil, err
+	}
+	for _, window := range windows {
+		matches, err := n.recognizeWindow(text, window)
+		if err != nil {
+			return nil, err // Never retain only the completed prefix.
+		}
+		out = append(out, matches...)
+	}
+	return dedupe(out), nil
+}
+
+func (n *onnxNER) recognizeWindow(text string, en *tokenizer.Encoding) ([]Match, error) {
+	var out []Match
 	seq := len(en.Ids)
-	if seq > nerMaxSeq {
-		seq = nerMaxSeq
-	}
 	ids := make([]int64, seq)
 	mask := make([]int64, seq)
 	zeros := make([]int64, seq)
@@ -184,7 +205,7 @@ func (n *onnxNER) Recognize(text string) (out []Match) {
 			for _, c := range cleanup {
 				_ = c.Destroy() // Best-effort tensor cleanup.
 			}
-			return nil
+			return nil, fmt.Errorf("NER tensor unavailable")
 		}
 		cleanup = append(cleanup, tv)
 		inputs = append(inputs, tv)
@@ -194,20 +215,26 @@ func (n *onnxNER) Recognize(text string) (out []Match) {
 		for _, c := range cleanup {
 			_ = c.Destroy() // Best-effort tensor cleanup.
 		}
-		return nil
+		return nil, fmt.Errorf("NER output unavailable")
 	}
 	defer func() { _ = outT.Destroy() }() // Best-effort tensor cleanup.
 
-	n.mu.Lock()
 	err = n.session.Run(inputs, []ort.Value{outT})
-	n.mu.Unlock()
 	for _, c := range cleanup {
 		_ = c.Destroy() // Best-effort tensor cleanup.
 	}
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("NER inference failed")
 	}
 	logits := outT.GetData()
+	if len(logits) != seq*n.numLbl {
+		return nil, fmt.Errorf("invalid NER output shape")
+	}
+	for _, logit := range logits {
+		if math.IsNaN(float64(logit)) || math.IsInf(float64(logit), 0) {
+			return nil, fmt.Errorf("nonfinite NER output")
+		}
+	}
 
 	var cur *Match
 	var curConf []float64
@@ -224,7 +251,10 @@ func (n *onnxNER) Recognize(text string) (out []Match) {
 	}
 	for i := 0; i < seq; i++ {
 		off := en.Offsets[i]
-		if len(off) < 2 || (off[0] == 0 && off[1] == 0) || off[1] > len(text) {
+		if len(off) < 2 || off[0] < 0 || off[1] < off[0] || off[1] > len(text) {
+			return nil, fmt.Errorf("invalid NER token offsets")
+		}
+		if off[0] == 0 && off[1] == 0 {
 			flush()
 			continue
 		}
@@ -245,7 +275,7 @@ func (n *onnxNER) Recognize(text string) (out []Match) {
 		curConf = []float64{conf}
 	}
 	flush()
-	return out
+	return out, nil
 }
 
 func argmaxSoftmax(row []float32) (int, float64) {

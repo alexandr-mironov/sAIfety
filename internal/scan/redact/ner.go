@@ -10,8 +10,19 @@ type NER interface {
 	Recognize(text string) []Match
 }
 
+// CheckedNER reports an incomplete/failed enabled model explicitly.
+type CheckedNER interface {
+	RecognizeChecked(text string) ([]Match, error)
+}
+
 // WithNER returns a copy of opts using the given recognizer.
 func (o Options) WithNER(n NER) Options {
 	o.ner = n
+	return o
+}
+
+// WithNERError records failure to initialize a provisioned enabled model.
+func (o Options) WithNERError(err error) Options {
+	o.nerErr = err
 	return o
 }

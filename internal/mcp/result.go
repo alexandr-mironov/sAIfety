@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -77,36 +78,53 @@ func (p *Proxy) inspectToolResult(ctx context.Context, source string, trusted bo
 		decision.Delivery, decision.Scope = "withheld", "tool"
 		return blockedResult(), decision
 	}
-	if v.Action != scan.ActionPass {
+	change := privacyChange{}
+	if p.RedactOn {
+		if hiddenPrivacy(v) {
+			decision.Delivery, decision.Reason = "withheld", "encoded_sensitive_data"
+			return withheldResult("sensitive data inside an encoded layer"), decision
+		}
+		_, err = p.redactValue(ctx, result, resultRoot, "", &change)
+		if err != nil {
+			decision.Action, decision.Delivery, decision.Reason = "withhold", "withheld", "pii_inspection_unavailable"
+			if errors.Is(err, errOpaquePII) {
+				decision.Reason = "opaque_pii_unavailable"
+			}
+			return withheldResult("PII inspection unavailable; result not delivered"), decision
+		}
+		if change.protected {
+			decision.Delivery, decision.Reason = "withheld", "protected_field_redacted"
+			return withheldResult("sensitive JSON key or protocol field"), decision
+		}
+	}
+	if v.Action != scan.ActionPass && (!p.RedactOn || !privacyOnly(v)) {
 		// Findings refer to the normalized document, not raw JSON offsets.
 		decision.Delivery = "transformed"
+		if change.changed {
+			if v.Action == scan.ActionSanitize {
+				decision.Delivery, decision.Reason = "withheld", "sensitive_sanitization_unavailable"
+				return withheldResult("cannot safely combine content and PII sanitization"), decision
+			}
+			safe, renderErr := maskedResultText(result)
+			if renderErr != nil {
+				return withheldResult("masked result unavailable"), decision
+			}
+			return withheldResultText(p.redactResultText(sanitize.Apply(safe, v))), decision
+		}
 		return withheldResultText(p.redactResultText(sanitize.Apply(doc.Text, v))), decision
 	}
 	if !p.RedactOn {
 		return raw, decision // Preserve numbers, extensions, annotations and formatting.
 	}
-	changed, protectedChanged := false, false
-	err = walkResult(result, resultRoot, func(s string, protected bool) (string, error) {
-		masked := p.redactResultText(s)
-		if masked != s {
-			changed = true
-			if protected {
-				protectedChanged = true
-				return s, nil // Avoid key collisions and invalid protocol identifiers.
-			}
-		}
-		return masked, nil
-	})
-	if err != nil {
-		decision.Action, decision.Delivery, decision.Reason = "withhold", "withheld", "redaction_error"
-		return withheldResult("tool result redaction failed"), decision
-	}
-	if protectedChanged {
-		decision.Delivery, decision.Reason = "transformed", "protected_field_redacted"
-		return withheldResultText("[sAIfety] Sensitive JSON key or protocol field; result withheld.\n" + p.redactResultText(doc.Raw)), decision
-	}
-	if changed {
+	if change.changed {
 		decision.Delivery, decision.Reason = "transformed", "redacted"
+		if change.numeric {
+			safe, renderErr := maskedResultText(result)
+			if renderErr != nil {
+				return withheldResult("masked result unavailable"), decision
+			}
+			return withheldResultText(safe), decision
+		}
 		return result, decision
 	}
 	return raw, decision
@@ -114,7 +132,11 @@ func (p *Proxy) inspectToolResult(ctx context.Context, source string, trusted bo
 
 func (p *Proxy) redactResultText(s string) string {
 	if p.RedactOn {
-		return redact.Mask(s, redact.Find(s, p.Redact))
+		masked, err := redact.Text(s, p.Redact)
+		if err != nil {
+			return "[sAIfety] PII inspection unavailable; text not delivered."
+		}
+		return masked
 	}
 	return s
 }
@@ -130,22 +152,9 @@ func withheldResultText(text string) map[string]any {
 // Parse with explicit work limits and reject duplicate keys before decoding
 // into maps, so different clients cannot interpret a different hidden value.
 func parseToolResult(raw json.RawMessage) (map[string]any, error) {
-	if len(raw) > maxResultBytes {
-		return nil, fmt.Errorf("result exceeds %d bytes", maxResultBytes)
-	}
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.UseNumber()
-	nodes := 0
-	value, err := readResultValue(d, 0, &nodes)
+	result, err := parseJSONObject(raw)
 	if err != nil {
 		return nil, err
-	}
-	if _, err := d.Token(); err != io.EOF {
-		return nil, fmt.Errorf("unexpected trailing JSON")
-	}
-	result, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("result must be an object")
 	}
 	if content, exists := result["content"]; exists {
 		blocks, ok := content.([]any)
@@ -162,6 +171,27 @@ func parseToolResult(raw json.RawMessage) (map[string]any, error) {
 		if _, ok := structured.(map[string]any); !ok {
 			return nil, fmt.Errorf("structuredContent must be an object")
 		}
+	}
+	return result, nil
+}
+
+func parseJSONObject(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) > maxResultBytes {
+		return nil, fmt.Errorf("result exceeds %d bytes", maxResultBytes)
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	nodes := 0
+	value, err := readResultValue(d, 0, &nodes)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, fmt.Errorf("unexpected trailing JSON")
+	}
+	result, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("result must be an object")
 	}
 	return result, nil
 }
@@ -302,6 +332,9 @@ func walkResult(value any, location resultLocation, visit func(string, bool) (st
 				return err
 			}
 		}
+	case json.Number:
+		_, err := visit(piiNumberText(value.String()), true)
+		return err
 	}
 	return nil
 }

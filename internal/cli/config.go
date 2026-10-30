@@ -33,6 +33,8 @@ type Config struct {
 type RedactConfig struct {
 	// Disabled turns off masking of tool outputs (default: enabled).
 	Disabled bool `json:"disabled"`
+	// AllowOpaque permits uninspected binary image/audio/blob responses.
+	AllowOpaque bool `json:"allowOpaque"`
 	// Keywords are extra literal strings to redact.
 	Keywords []string `json:"keywords"`
 	// Allowlist are substrings that must never be redacted.

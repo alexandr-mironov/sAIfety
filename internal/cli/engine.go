@@ -81,6 +81,7 @@ func RedactOptions(cfg Config, useModel bool) redact.Options {
 		if err == nil {
 			opts = opts.WithNER(ner)
 		} else {
+			opts = opts.WithNERError(err)
 			fmt.Fprintln(os.Stderr, "saifety: pii ner unavailable, using heuristics (rebuild with -tags onnx):", err)
 		}
 	}
