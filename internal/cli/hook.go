@@ -42,7 +42,10 @@ func runHook(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return ExitError
 	}
 	st, _ := stats.Load(stats.ScopePath("hook"))
-	h := &hook.Handler{Scanner: newScanner(cfg, true), Blocklist: bl, Redact: RedactOptions(cfg, true), RedactOn: RedactEnabled(cfg), Stats: st}
+	redaction := RedactOptions(cfg, true)
+	defer func() { _ = redaction.CloseNER() }()
+	scanner, _ := newScannerAndPolicyWithRedact(cfg, true, redaction)
+	h := &hook.Handler{Scanner: scanner, Blocklist: bl, Redact: redaction, RedactOn: RedactEnabled(cfg), Stats: st}
 
 	var in hook.Input
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {

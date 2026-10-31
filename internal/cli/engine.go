@@ -12,24 +12,16 @@ import (
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
 )
 
-// newScanner wires the default detectors, the selected instruction
-// classifier and the policy into one scanner. Every subcommand goes through
-// here so scan, proxy and hook always agree on what is dangerous.
-// The instruction classifier is selected by cfg.Classifier in every mode;
-// its default is the embedded trained model.
-func newScanner(cfg Config, useModel bool) *scan.Scanner {
-	sc, _ := newScannerAndPolicy(cfg, useModel)
-	return sc
-}
-
-func newScannerAndPolicy(cfg Config, useModel bool) (*scan.Scanner, scan.Policy) {
+// newScannerAndPolicyWithRedact shares one optional recognizer between
+// detection and output masking. The instruction classifier is independent.
+func newScannerAndPolicyWithRedact(cfg Config, useModel bool, opts redact.Options) (*scan.Scanner, scan.Policy) {
 	profile := policy.Strict
 	if cfg.Policy == "balanced" || cfg.Policy == "default" {
 		profile = policy.Default
 	}
 	pol := policy.New(profile)
 	detectors := append(detect.Default(), classify.Detector{C: classifierFor(cfg, useModel)})
-	detectors = append(detectors, detect.Redaction{Opts: RedactOptions(cfg, useModel)})
+	detectors = append(detectors, detect.Redaction{Opts: opts})
 	return scan.New(detectors, pol, scan.Options{MaxDecodeDepth: cfg.MaxDecodeDepth}), pol
 }
 
@@ -38,21 +30,50 @@ func newScannerAndPolicy(cfg Config, useModel bool) (*scan.Scanner, scan.Policy)
 // the fast lexical classifier — never the transformer — regardless of the
 // configured classifier. The heavy model is reserved for tool-call results.
 func NewDescScanner(cfg Config) *scan.Scanner {
+	return newDescScannerWithRedact(cfg, RedactOptions(cfg, false))
+}
+
+func newDescScannerWithRedact(cfg Config, opts redact.Options) *scan.Scanner {
 	profile := policy.Strict
 	if cfg.Policy == "balanced" || cfg.Policy == "default" {
 		profile = policy.Default
 	}
 	pol := policy.New(profile)
 	detectors := append(detect.Default(), classify.Detector{C: classify.Lexical{}})
-	detectors = append(detectors, detect.Redaction{Opts: RedactOptions(cfg, false)})
+	detectors = append(detectors, detect.Redaction{Opts: opts})
 	return scan.New(detectors, pol, scan.Options{MaxDecodeDepth: cfg.MaxDecodeDepth})
 }
 
-// RedactOptions never provisions or loads NER. useModel affects only the
-// independent instruction classifier and is kept for callers' compatibility.
+// RedactOptions attaches NER only after explicit configuration. It never
+// downloads files. The old deep/useModel flag cannot activate NER on its own.
 func RedactOptions(cfg Config, _ bool) redact.Options {
-	return redact.Options{Keywords: cfg.Redact.Keywords, Allowlist: cfg.Redact.Allowlist,
+	return redactOptionsWithNER(cfg, redact.NewONNXNER)
+}
+
+func redactOptionsWithNER(cfg Config, load func(redact.NERConfig) (redact.NER, error)) redact.Options {
+	opts := redact.Options{Keywords: cfg.Redact.Keywords, Allowlist: cfg.Redact.Allowlist,
 		MinEntropy: cfg.Redact.MinEntropy}
+	if !cfg.Redact.NER || cfg.Redact.NoModel || cfg.Redact.Disabled {
+		return opts
+	}
+	bundle, err := model.PIIBundle()
+	if err != nil {
+		return opts.WithNERError(err)
+	}
+	lib := model.RuntimeLibPath()
+	if override := os.Getenv("SAIFETY_ORT_LIB"); override != "" {
+		lib = override
+	}
+	ner, err := load(redact.NERConfig{LibraryPath: lib,
+		ModelPath: model.Path(bundle.Model), TokenizerPath: model.Path(bundle.Tokenizer),
+		ConfigPath: model.Path(bundle.Config), Entities: cfg.Redact.NERLabels})
+	if err != nil {
+		return opts.WithNERError(err)
+	}
+	if ner == nil {
+		return opts.WithNERError(fmt.Errorf("PII NER loader returned no recognizer"))
+	}
+	return opts.WithNER(ner)
 }
 
 // RedactEnabled reports whether output masking should run.

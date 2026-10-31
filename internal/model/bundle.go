@@ -26,6 +26,23 @@ func DefaultBundle() (Bundle, error) {
 	}, nil
 }
 
+// PIIBundle is an optional multilingual ONNX token-classification bundle.
+// It must be provisioned explicitly; only person labels are used by default.
+// Availability does not establish recognition quality for a language/script.
+func PIIBundle() (Bundle, error) {
+	const hf = "https://huggingface.co/Xenova/bert-base-multilingual-cased-ner-hrl/resolve/main"
+	rt, err := runtimeArtifact()
+	if err != nil {
+		return Bundle{}, err
+	}
+	return Bundle{
+		Model:     Artifact{Name: "pii-model.onnx", URL: hf + "/onnx/model_quantized.onnx", Size: 178495423},
+		Tokenizer: Artifact{Name: "pii-tokenizer.json", URL: hf + "/tokenizer.json"},
+		Config:    Artifact{Name: "pii-config.json", URL: hf + "/config.json"},
+		Runtime:   rt,
+	}, nil
+}
+
 // ortVersion is the ONNX Runtime release whose C API (21) matches the
 // onnxruntime_go binding used by the onnx build.
 const ortVersion = "1.22.0"
