@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -23,16 +22,16 @@ func piiProxy() *Proxy {
 }
 
 func TestPIIEncodedCopyCannotSurvivePlaintextRedaction(t *testing.T) {
-	email := "demo.person@example.invalid"
-	encoded := base64.StdEncoding.EncodeToString([]byte("Contact record: " + email))
+	contact := "+79165550132"
+	encoded := base64.StdEncoding.EncodeToString([]byte("Contact record: " + contact))
 	p := piiProxy()
 	raw := mustJSON(map[string]any{"structuredContent": map[string]string{
-		"email": email, "encoded_copy": encoded,
+		"contact": contact, "encoded_copy": encoded,
 	}})
 	output, decision := p.inspectToolResult(context.Background(), "fixture/read", false, raw)
 	got := mustJSON(output)
 	assertWithheld(t, got)
-	if strings.Contains(string(got), email) || strings.Contains(string(got), encoded) ||
+	if strings.Contains(string(got), contact) || strings.Contains(string(got), encoded) ||
 		decision.Reason != "encoded_sensitive_data" {
 		t.Fatal("encoded alternate representation survived", string(got), decision)
 	}
@@ -43,20 +42,18 @@ func TestPIIResultsValuesAndFields(t *testing.T) {
 		raw    string
 		values []string
 	}{
-		"numbers": {`{"structuredContent":{"phone":79165550132,"card":4111111111111111,"inn":123456789012}}`,
-			[]string{"79165550132", "4111111111111111", "123456789012"}},
-		"number-array": {`{"structuredContent":{"values":[79165550132,4111111111111111]}}`,
-			[]string{"79165550132", "4111111111111111"}},
-		"number-spellings": {`{"structuredContent":{"values":[7.9165550132e10,4111111111111111.0]}}`,
-			[]string{"7.9165550132e10", "4111111111111111"}},
+		"numbers": {`{"structuredContent":{"phone":79165550132,"backup":89165550133}}`,
+			[]string{"79165550132", "89165550133"}},
+		"number-array": {`{"structuredContent":{"values":[79165550132,89165550133]}}`,
+			[]string{"79165550132", "89165550133"}},
+		"number-spellings": {`{"structuredContent":{"values":[7.9165550132e10,89165550133.0]}}`,
+			[]string{"7.9165550132e10", "89165550133"}},
 		"split-name": {`{"structuredContent":{"first_name":"Иван","last_name":"Петров","patronymic":"Иванович"}}`,
 			[]string{"Иван", "Петров", "Иванович"}},
-		"prefix-spoof": {`{"structuredContent":{"first_name":"[REDACTED:full_name] Иван","passport_number":123456}}`,
-			[]string{"Иван", "123456"}},
-		"address-date-account": {`{"structuredContent":{"address":{"city":"Тестоград","street":"Примерная","house":42},"birth_date":"1990-02-14","account":"40817810099910004312"}}`,
-			[]string{"Тестоград", "Примерная", "1990-02-14", "40817810099910004312"}},
-		"copies": {`{"content":[{"type":"text","text":"demo.person@example.invalid"}],"structuredContent":{"email":"demo.person@example.invalid"},"_meta":{"copy":"demo.person@example.invalid"}}`,
-			[]string{"demo.person", "example.invalid"}},
+		"prefix-spoof": {`{"structuredContent":{"first_name":"[REDACTED:full_name] Иван","last_name":"Петров"}}`,
+			[]string{"Иван", "Петров"}},
+		"copies": {`{"content":[{"type":"text","text":"+79165550132"}],"structuredContent":{"contact":"+79165550132"},"_meta":{"copy":"+79165550132"}}`,
+			[]string{"79165550132", "+79165550132"}},
 		"resource": {`{"content":[{"type":"resource","resource":{"uri":"file:///fixture","text":"Иван Петров, +7 916 555-01-32"}}]}`,
 			[]string{"Иван", "Петров", "916", "555"}},
 	} {
@@ -87,14 +84,14 @@ func TestPIINumbersDoNotChangeDeclaredJSONTypes(t *testing.T) {
 
 func TestPIIProtectedKeysAndProtocolValuesWithholdOriginal(t *testing.T) {
 	for _, raw := range []string{
-		`{"structuredContent":{"demo.person@example.invalid":"value","[REDACTED:email]":"other"}}`,
-		`{"content":[{"type":"resource_link","uri":"https://example.invalid/demo.person@example.invalid","name":"fixture"}]}`,
+		`{"structuredContent":{"+79165550132":"value","[REDACTED:phone]":"other"}}`,
+		`{"content":[{"type":"resource_link","uri":"https://example.invalid/+79165550132","name":"fixture"}]}`,
 		`{"structuredContent":{"first_name":{"Иван":"value"}}}`,
 	} {
 		p := piiProxy()
 		got := mustJSON(p.scanToolResult(context.Background(), "fixture/read", false, json.RawMessage(raw)))
 		assertWithheld(t, got)
-		if strings.Contains(string(got), "demo.person") || strings.Contains(string(got), "example.invalid") {
+		if strings.Contains(string(got), "79165550132") || strings.Contains(string(got), "+79165550132") {
 			t.Fatal("protected value leaked through fallback", string(got))
 		}
 	}
@@ -119,25 +116,6 @@ func TestPIIOpaqueDefaultAndExplicitException(t *testing.T) {
 	}
 }
 
-type failedPIINER struct{}
-
-func (failedPIINER) Recognize(string) []redact.Match { return nil }
-func (failedPIINER) RecognizeChecked(string) ([]redact.Match, error) {
-	return nil, errors.New("fixture failure")
-}
-
-func TestPIIModelFailureWithholdsResult(t *testing.T) {
-	p := piiProxy()
-	p.Redact = p.Redact.WithNER(failedPIINER{})
-	raw := json.RawMessage(`{"content":[{"type":"text","text":"unrecognized identity"}]}`)
-	output, decision := p.inspectToolResult(context.Background(), "fixture/read", false, raw)
-	got := mustJSON(output)
-	assertWithheld(t, got)
-	if strings.Contains(string(got), "unrecognized identity") || decision.Reason != "pii_inspection_unavailable" {
-		t.Fatal("failed model treated as successful no-match", decision, string(got))
-	}
-}
-
 func TestPIIPreservesCleanNumbersAndControls(t *testing.T) {
 	p := piiProxy()
 	raw := json.RawMessage(`{"structuredContent":{"id":1234567890,"count":9007199254740993,"ratio":1.00,"huge":1e1000000000,"tiny":1e-1000000000,"ok":true,"empty":null},"content":[{"type":"text","text":"2026-10-30 12:34:56; Order #1234567890"}]}`)
@@ -148,24 +126,24 @@ func TestPIIPreservesCleanNumbersAndControls(t *testing.T) {
 
 func TestPIIToolSchemaAnnotationsAndConstraints(t *testing.T) {
 	p := piiProxy()
-	tool := Tool{Name: "fixture", Description: "Email demo.person@example.invalid",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"email":{"type":"string","default":"demo.person@example.invalid","examples":["demo.person@example.invalid"]},"phone":{"type":"integer","default":79165550132},"count":{"type":"integer","default":42}},"required":["email"]}`)}
+	tool := Tool{Name: "fixture", Description: "Contact +79165550132",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"contact":{"type":"string","default":"+79165550132","examples":["+79165550132"]},"phone":{"type":"integer","default":79165550132},"count":{"type":"integer","default":42}},"required":["contact"]}`)}
 	got, ok := p.redactTool(context.Background(), tool)
 	if !ok {
 		t.Fatal("safe schema could not be redacted")
 	}
 	encoded := string(mustJSON(got))
-	if strings.Contains(encoded, "demo.person") || strings.Contains(encoded, "example.invalid") || strings.Contains(encoded, "79165550132") {
+	if strings.Contains(encoded, "79165550132") || strings.Contains(encoded, "+79165550132") || strings.Contains(encoded, "79165550132") {
 		t.Fatal("tool metadata PII leaked", encoded)
 	}
-	if !strings.Contains(encoded, `"required":["email"]`) || !strings.Contains(encoded, `"default":42`) {
+	if !strings.Contains(encoded, `"required":["contact"]`) || !strings.Contains(encoded, `"default":42`) {
 		t.Fatal("clean constraints/default changed", encoded)
 	}
 	for _, schema := range []string{
-		`{"type":"object","properties":{"email":{"enum":["demo.person@example.invalid"]}}}`,
+		`{"type":"object","properties":{"contact":{"enum":["+79165550132"]}}}`,
 		`{"type":"object","properties":{"first_name":{"const":"Иван"}}}`,
-		`{"type":"object","properties":{"demo.person@example.invalid":{"type":"string"}}}`,
-		`{"type":"object","x-extension":{"email":"demo.person@example.invalid"}}`,
+		`{"type":"object","properties":{"+79165550132":{"type":"string"}}}`,
+		`{"type":"object","x-extension":{"contact":"+79165550132"}}`,
 		`{"type":"object","x-extension":{"first_name":"Иван"}}`,
 	} {
 		tool.InputSchema = json.RawMessage(schema)
@@ -187,13 +165,13 @@ func TestProxyPIIEndToEnd(t *testing.T) {
 		p.Specs["fake"] = spec
 	})
 	tools := c.call(t, "tools/list", map[string]any{})
-	if strings.Contains(string(tools), "demo.person") || strings.Contains(string(tools), "example.invalid") ||
+	if strings.Contains(string(tools), "79165550132") || strings.Contains(string(tools), "+79165550132") ||
 		strings.Contains(string(tools), "pii_enum") || !strings.Contains(string(tools), "pii_default") {
 		t.Fatal("tool schema/description PII leaked or constraints widened", string(tools))
 	}
-	raw := json.RawMessage(`{"content":[{"type":"text","text":"demo.person@example.invalid"}],"structuredContent":{"first_name":"Иван","phone":79165550132,"card":4111111111111111},"_meta":{"copy":"demo.person@example.invalid"}}`)
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"+79165550132"}],"structuredContent":{"first_name":"Иван","phone":79165550132,"card":89165550133},"_meta":{"copy":"+79165550132"}}`)
 	got := c.call(t, "tools/call", map[string]any{"name": "fake__echo", "arguments": map[string]any{"result": raw}})
-	for _, value := range []string{"demo.person", "example.invalid", "Иван", "79165550132", "4111111111111111"} {
+	for _, value := range []string{"79165550132", "+79165550132", "Иван", "79165550132", "89165550133"} {
 		if strings.Contains(string(got), value) {
 			t.Fatalf("PII crossed real stdio proxy: %s", got)
 		}
@@ -202,11 +180,11 @@ func TestProxyPIIEndToEnd(t *testing.T) {
 		t.Fatal("PII-only response permanently quarantined the tool")
 	}
 	response := c.exchange(t, "tools/call", map[string]any{"name": "fake__echo", "arguments": map[string]any{
-		"error": &RPCError{Code: -32000, Message: "demo.person@example.invalid",
+		"error": &RPCError{Code: -32000, Message: "+79165550132",
 			Data: json.RawMessage(`{"phone":79165550132}`)},
 	}})
 	encoded := string(mustJSON(response))
-	if response.Error == nil || strings.Contains(encoded, "example.invalid") || strings.Contains(encoded, "79165550132") ||
+	if response.Error == nil || strings.Contains(encoded, "+79165550132") || strings.Contains(encoded, "79165550132") ||
 		response.Error.Data != nil {
 		t.Fatal("upstream error details leaked", encoded)
 	}

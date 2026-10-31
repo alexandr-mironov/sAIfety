@@ -39,32 +39,6 @@ func TestPrivateKeyBlock(t *testing.T) {
 	}
 }
 
-func TestPII(t *testing.T) {
-	text := "Contact John at john.doe@example.com or +1 (415) 555-0132. Server at 10.0.0.5. Card 4111 1111 1111 1111."
-	got := labels(Find(text, DefaultOptions))
-	for _, want := range []string{"email", "phone", "ip", "credit_card"} {
-		if !got[want] {
-			t.Errorf("missing PII %s in %v", want, got)
-		}
-	}
-	// MaskIP off removes ip.
-	off := DefaultOptions
-	off.MaskIP = false
-	if labels(Find(text, off))["ip"] {
-		t.Error("ip should be skipped when MaskIP is off")
-	}
-}
-
-func TestLuhnRejectsRandomDigits(t *testing.T) {
-	text := "order number 1234567812345670 and id 9999999999999999"
-	// 1234567812345670 passes Luhn? check only valid ones flagged.
-	for _, m := range Find(text, DefaultOptions) {
-		if m.Label == "credit_card" && !validLuhn(text[m.Start:m.End]) {
-			t.Fatalf("non-Luhn flagged as card: %q", text[m.Start:m.End])
-		}
-	}
-}
-
 func TestMaskAndAllowlist(t *testing.T) {
 	text := "key AKIAIOSFODNN7EXAMPLE and email keep@example.com"
 	opts := DefaultOptions
@@ -130,7 +104,7 @@ func TestFullNameMasked(t *testing.T) {
 func TestContextNameNearContact(t *testing.T) {
 	yes := []string{
 		"Заявку подал Иван Петров, телефон +7 916 555-01-32.",
-		"Contact John Smith at john@example.com for details.",
+		"Контакт: Иван Сидоров, +7 916 555-01-32.",
 		"Свяжитесь: Мария Кузнецова, mariak@corp.example",
 	}
 	for _, text := range yes {
@@ -146,9 +120,9 @@ func TestContextNameNearContact(t *testing.T) {
 }
 
 func TestContextNameMasked(t *testing.T) {
-	text := "Contact John Smith at john@example.com."
+	text := "Контакт: Иван Сидоров, +7 916 555-01-32."
 	out := Mask(text, Find(text, DefaultOptions))
-	if strings.Contains(out, "John Smith") {
+	if strings.Contains(out, "Иван Сидоров") {
 		t.Fatalf("context name not masked: %q", out)
 	}
 }

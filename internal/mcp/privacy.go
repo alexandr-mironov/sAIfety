@@ -13,6 +13,7 @@ import (
 )
 
 var errOpaquePII = errors.New("opaque content cannot be inspected for PII")
+var errEncodedPII = errors.New("encoded sensitive data")
 
 type privacyChange struct {
 	changed, protected, numeric bool
@@ -81,6 +82,13 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 		}
 		return value, nil
 	case string:
+		encoded, err := redact.EncodedSensitive(value, p.Redact)
+		if err != nil {
+			return nil, err
+		}
+		if encoded {
+			return nil, errEncodedPII
+		}
 		masked, err := redact.Field(field, value, p.Redact)
 		if err != nil {
 			return nil, err

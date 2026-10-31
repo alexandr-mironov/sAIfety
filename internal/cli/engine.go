@@ -15,7 +15,6 @@ import (
 // newScanner wires the default detectors, the selected instruction
 // classifier and the policy into one scanner. Every subcommand goes through
 // here so scan, proxy and hook always agree on what is dangerous.
-// useModel enables the cached PII NER model for runtime paths and deep scans.
 // The instruction classifier is selected by cfg.Classifier in every mode;
 // its default is the embedded trained model.
 func newScanner(cfg Config, useModel bool) *scan.Scanner {
@@ -49,43 +48,11 @@ func NewDescScanner(cfg Config) *scan.Scanner {
 	return scan.New(detectors, pol, scan.Options{MaxDecodeDepth: cfg.MaxDecodeDepth})
 }
 
-// RedactOptions builds the redaction options from config. IP masking is on
-// unless KeepIP is set. When the PII NER model has been provisioned (and the
-// binary is built with -tags onnx), it is attached so names without a
-// patronymic or nearby contact are still caught.
-func RedactOptions(cfg Config, useModel bool) redact.Options {
-	opts := redact.Options{
-		Keywords:   cfg.Redact.Keywords,
-		Allowlist:  cfg.Redact.Allowlist,
-		MaskIP:     !cfg.Redact.KeepIP,
-		MinEntropy: cfg.Redact.MinEntropy,
-	}
-	if !useModel || cfg.Redact.Disabled || cfg.Redact.NoModel {
-		return opts
-	}
-	if !classify.Built {
-		return opts // no transformer backend compiled in
-	}
-	if pii, err := model.PIIBundle(); err == nil && pii.Present() {
-		lib := model.RuntimeLibPath()
-		if env := os.Getenv("SAIFETY_ORT_LIB"); env != "" {
-			lib = env
-		}
-		ner, err := redact.NewONNXNER(redact.NERConfig{
-			LibraryPath:   lib,
-			ModelPath:     model.Path(pii.Model),
-			TokenizerPath: model.Path(pii.Tokenizer),
-			ConfigPath:    model.Path(pii.Config),
-			Entities:      cfg.Redact.NERLabels,
-		})
-		if err == nil {
-			opts = opts.WithNER(ner)
-		} else {
-			opts = opts.WithNERError(err)
-			fmt.Fprintln(os.Stderr, "saifety: pii ner unavailable, using heuristics (rebuild with -tags onnx):", err)
-		}
-	}
-	return opts
+// RedactOptions never provisions or loads NER. useModel affects only the
+// independent instruction classifier and is kept for callers' compatibility.
+func RedactOptions(cfg Config, _ bool) redact.Options {
+	return redact.Options{Keywords: cfg.Redact.Keywords, Allowlist: cfg.Redact.Allowlist,
+		MinEntropy: cfg.Redact.MinEntropy}
 }
 
 // RedactEnabled reports whether output masking should run.

@@ -19,7 +19,7 @@ type Kind string
 
 const (
 	KindSecret Kind = "secret" // API keys, tokens, private keys
-	KindPII    Kind = "pii"    // emails, phones, cards, IPs
+	KindPII    Kind = "pii"    // Russian names and RF mobile phones
 	KindAuth   Kind = "auth"   // Authorization headers, credentials in URLs
 	KindCustom Kind = "custom" // matched a user keyword denylist entry
 )
@@ -27,55 +27,47 @@ const (
 // Match is one detected span.
 type Match struct {
 	Kind       Kind
-	Label      string  // e.g. "aws_access_key", "email", "jwt"
+	Label      string  // e.g. "aws_access_key", "phone", "jwt"
 	Start, End int     // byte offsets
 	Confidence float64 // 0..1
 }
 
 // Options tune detection and masking.
 type Options struct {
+	orderValue bool // explicit order field; never bypasses secret inspection
 	// Keywords are extra literal strings to redact (case-insensitive).
 	Keywords []string
 	// Allowlist are substrings that must never be redacted even if matched.
 	Allowlist []string
-	// MaskIP includes IP addresses as PII.
-	MaskIP bool
 	// MinEntropy is the Shannon-entropy threshold for generic high-entropy
 	// token detection (bits per char). 0 disables entropy scanning.
 	MinEntropy float64
-	// ner, when set, is an optional model-based recognizer (see WithNER).
-	ner    NER
-	nerErr error
 }
 
-// DefaultOptions enables the standard secret/PII set with entropy off (too
-// noisy without tuning) and IP masking on.
-var DefaultOptions = Options{MaskIP: true, MinEntropy: 0}
+// DefaultOptions masks credentials, Russian names and RF mobiles, without a model.
+var DefaultOptions = Options{}
 
 // Find returns all matches in text, sorted by position, de-overlapped so a
 // secret isn't also reported as generic entropy.
 func Find(text string, opts Options) []Match {
-	matches, _ := find(text, opts, false)
+	matches, _ := find(text, opts)
 	return matches
 }
 
-// FindChecked distinguishes an unavailable/failed enabled recognizer from a
-// completed inspection with no matches. Runtime output paths must use it.
+// FindChecked reports incomplete inspection explicitly. Runtime output paths
+// must not turn an inspection failure into a successful no-match.
 func FindChecked(text string, opts Options) (matches []Match, err error) {
 	defer func() {
 		if recover() != nil {
 			matches, err = nil, fmt.Errorf("PII inspection failed")
 		}
 	}()
-	return find(text, opts, true)
+	return find(text, opts)
 }
 
-func find(text string, opts Options, checked bool) ([]Match, error) {
+func find(text string, opts Options) ([]Match, error) {
 	var out []Match
 	for _, p := range patterns {
-		if p.kind == KindPII && p.label == "ip" && !opts.MaskIP {
-			continue
-		}
 		for _, m := range p.re.FindAllStringSubmatchIndex(text, -1) {
 			s, e := m[0], m[1]
 			if len(m) >= 4 && m[2] >= 0 { // capture group 1 = the sensitive part
@@ -99,26 +91,9 @@ func find(text string, opts Options, checked bool) ([]Match, error) {
 	if opts.MinEntropy > 0 {
 		out = append(out, entropyMatches(text, opts.MinEntropy)...)
 	}
-	// Context layer: names without a patronymic, disambiguated by a nearby
-	// phone/email. Runs on the matches found so far.
-	out = append(out, contextNames(text, out)...)
+	out = append(out, russianNames(text)...)
+	out = append(out, mobilePhones(text, opts.orderValue)...)
 	out = append(out, labelledMatches(text)...)
-	out = append(out, bareNames(text)...)
-	if checked && opts.nerErr != nil {
-		return nil, fmt.Errorf("PII recognizer unavailable")
-	}
-	// Model layer: a PII NER model catches remaining personal data.
-	if opts.ner != nil {
-		if n, ok := opts.ner.(CheckedNER); checked && ok {
-			modelMatches, err := n.RecognizeChecked(text)
-			if err != nil {
-				return nil, fmt.Errorf("PII recognizer failed")
-			}
-			out = append(out, modelMatches...)
-		} else {
-			out = append(out, opts.ner.Recognize(text)...)
-		}
-	}
 	for _, m := range out {
 		if m.Start < 0 || m.End > len(text) || m.End <= m.Start {
 			return nil, fmt.Errorf("invalid PII span")

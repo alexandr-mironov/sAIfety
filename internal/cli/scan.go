@@ -25,7 +25,7 @@ func runScan(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfgPath := fs.String("config", DefaultConfigPath(), "config file")
 	failOn := fs.String("fail-on", "base", "exit non-zero from this level: base | medium | critical")
 	ocr := fs.Bool("ocr", false, "run OCR on raster images (needs tesseract in PATH)")
-	deep := fs.Bool("deep", false, "use the cached PII NER model during scanning (needs -tags onnx; classifier is selected by config)")
+	deep := fs.Bool("deep", false, "compatibility flag; PII uses model-free Russian name/mobile rules")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}

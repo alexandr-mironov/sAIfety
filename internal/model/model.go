@@ -38,7 +38,7 @@ type Artifact struct {
 type Bundle struct {
 	Model     Artifact
 	Tokenizer Artifact
-	Config    Artifact // optional model config.json (id2label for NER)
+	Config    Artifact // optional model config.json
 	Runtime   Artifact // ONNX Runtime shared library for this OS/arch
 	// Labels maps the logit index of the positive ("injection") class.
 	InjectionIndex int

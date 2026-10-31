@@ -102,7 +102,7 @@ func TestPostToolUseCleanIsSilent(t *testing.T) {
 func TestPostToolUseMasksSecrets(t *testing.T) {
 	h := handler()
 	h.RedactOn = true
-	resp, _ := json.Marshal(map[string]any{"stdout": "profile key AKIAIOSFODNN7EXAMPLE for user john@example.com", "stderr": ""})
+	resp, _ := json.Marshal(map[string]any{"stdout": "profile key AKIAIOSFODNN7EXAMPLE for user Иван Петров", "stderr": ""})
 	out, err := h.PostToolUse(context.Background(), Input{ToolName: "Bash", ToolResponse: resp})
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestPostToolUseMasksSecrets(t *testing.T) {
 		t.Fatalf("expected masking to rewrite output: %+v", out)
 	}
 	got := upd["stdout"].(string)
-	if strings.Contains(got, "AKIAIOSFODNN7EXAMPLE") || strings.Contains(got, "john@example.com") {
+	if strings.Contains(got, "AKIAIOSFODNN7EXAMPLE") || strings.Contains(got, "Иван Петров") {
 		t.Fatalf("secret/PII not masked: %q", got)
 	}
 	if !strings.Contains(got, "[REDACTED:") {

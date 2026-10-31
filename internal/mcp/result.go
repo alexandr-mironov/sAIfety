@@ -90,6 +90,9 @@ func (p *Proxy) inspectToolResult(ctx context.Context, source string, trusted bo
 			if errors.Is(err, errOpaquePII) {
 				decision.Reason = "opaque_pii_unavailable"
 			}
+			if errors.Is(err, errEncodedPII) {
+				decision.Reason = "encoded_sensitive_data"
+			}
 			return withheldResult("PII inspection unavailable; result not delivered"), decision
 		}
 		if change.protected {
