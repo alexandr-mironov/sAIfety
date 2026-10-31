@@ -87,7 +87,12 @@ type scanOpts struct {
 // scanPaths scans files and directories, then runs the cross-file
 // aggregate pass, and returns the combined summary.
 func scanPaths(ctx context.Context, paths []string, cfg Config, opts scanOpts, stderr io.Writer) (*report.Summary, error) {
-	sc, pol := newScannerAndPolicy(cfg, opts.Deep)
+	redaction := RedactOptions(cfg, opts.Deep)
+	defer func() { _ = redaction.CloseNER() }()
+	if err := redaction.NERError(); err != nil {
+		return nil, fmt.Errorf("enabled PII NER unavailable: %w", err)
+	}
+	sc, pol := newScannerAndPolicyWithRedact(cfg, opts.Deep, redaction)
 	agg := aggregate.New(sc, pol)
 	st, _ := stats.Load(stats.ScopePath("scan"))
 	var ocr extract.OCR

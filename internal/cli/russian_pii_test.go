@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPIIProfileIgnoresLegacyNERSettings(t *testing.T) {
+func TestPIIProfileStaysModelFreeWithoutOptIn(t *testing.T) {
 	for _, useModel := range []bool{false, true} {
 		for _, noModel := range []bool{false, true} {
 			cfg := Config{Redact: RedactConfig{NoModel: noModel, NERLabels: []string{"PER", "ORG", "LOC", "DATE"}, KeepIP: false}}

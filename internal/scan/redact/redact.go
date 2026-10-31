@@ -35,6 +35,8 @@ type Match struct {
 // Options tune detection and masking.
 type Options struct {
 	orderValue bool // explicit order field; never bypasses secret inspection
+	ner        NER
+	nerErr     error
 	// Keywords are extra literal strings to redact (case-insensitive).
 	Keywords []string
 	// Allowlist are substrings that must never be redacted even if matched.
@@ -94,6 +96,22 @@ func find(text string, opts Options) ([]Match, error) {
 	out = append(out, russianNames(text)...)
 	out = append(out, mobilePhones(text, opts.orderValue)...)
 	out = append(out, labelledMatches(text)...)
+	if opts.nerErr != nil {
+		return nil, fmt.Errorf("PII recognizer unavailable")
+	}
+	if opts.ner != nil {
+		var modelMatches []Match
+		if checked, ok := opts.ner.(CheckedNER); ok {
+			var err error
+			modelMatches, err = checked.RecognizeChecked(text)
+			if err != nil {
+				return nil, fmt.Errorf("PII recognizer failed")
+			}
+		} else {
+			modelMatches = opts.ner.Recognize(text)
+		}
+		out = append(out, modelMatches...)
+	}
 	for _, m := range out {
 		if m.Start < 0 || m.End > len(text) || m.End <= m.Start {
 			return nil, fmt.Errorf("invalid PII span")

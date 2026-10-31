@@ -68,15 +68,18 @@ func runProxy(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	for _, t := range cfg.TrustedSources {
 		trusted[t] = true
 	}
+	redaction := RedactOptions(cfg, true)
+	defer func() { _ = redaction.CloseNER() }()
+	scanner, _ := newScannerAndPolicyWithRedact(cfg, true, redaction)
 	p := &mcp.Proxy{
 		Context:     observer,
-		Scanner:     newScanner(cfg, true),
-		DescScanner: NewDescScanner(cfg),
+		Scanner:     scanner,
+		DescScanner: newDescScannerWithRedact(cfg, redaction),
 		Specs:       cfg.MCPServers,
 		Trusted:     trusted,
 		Blocklist:   bl,
 		Log:         log.New(stderr, "saifety: ", log.Ltime), // stdout is the protocol channel
-		Redact:      RedactOptions(cfg, true),
+		Redact:      redaction,
 		RedactOn:    RedactEnabled(cfg),
 		AllowOpaque: cfg.Redact.AllowOpaque,
 		Pins:        pins,

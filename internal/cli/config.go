@@ -43,9 +43,11 @@ type RedactConfig struct {
 	KeepIP bool `json:"keepIP"`
 	// MinEntropy enables generic high-entropy token masking when > 0.
 	MinEntropy float64 `json:"minEntropy"`
-	// Deprecated: NER is never loaded; retained for existing config files.
+	// NER explicitly enables the cached optional name recognizer (default: off).
+	NER bool `json:"ner"`
+	// NoModel vetoes NER even when NER is true (legacy operator override).
 	NoModel bool `json:"noModel"`
-	// Deprecated: NER labels have no effect.
+	// NERLabels selects model entities after explicit enablement; default persons.
 	NERLabels []string `json:"nerLabels"`
 }
 

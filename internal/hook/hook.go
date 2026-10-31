@@ -162,9 +162,22 @@ func (h *Handler) PostToolUse(ctx context.Context, in Input) (Output, error) {
 	changed := false
 	var cats []string
 	var blockErr error
+	mask := func(s string) string {
+		if !h.RedactOn || s == "" {
+			return s
+		}
+		masked, err := redact.Text(s, h.Redact)
+		if err != nil {
+			changed = true
+			cats = append(cats, string(scan.CatPII))
+			return "[sAIfety] Tool output withheld: PII inspection unavailable."
+		}
+		changed = changed || masked != s
+		return masked
+	}
 	resp = rewriteStrings(resp, func(s string) string {
 		if len(s) < 16 {
-			return s
+			return mask(s)
 		}
 		v := h.Scanner.Scan(ctx, &scan.Document{Source: source, Kind: scan.KindToolResult, Raw: s})
 		h.Stats.Record(v)
@@ -172,14 +185,7 @@ func (h *Handler) PostToolUse(ctx context.Context, in Input) (Output, error) {
 			worst = v.Level
 		}
 		if v.Action == scan.ActionPass {
-			if h.RedactOn {
-				masked := redact.Mask(s, redact.Find(s, h.Redact))
-				if masked != s {
-					changed = true
-					return masked
-				}
-			}
-			return s
+			return mask(s)
 		}
 		changed = true
 		for _, f := range v.Findings {
@@ -189,10 +195,7 @@ func (h *Handler) PostToolUse(ctx context.Context, in Input) (Output, error) {
 			blockErr = errors.Join(blockErr, h.Blocklist.Block(inputSource(in.ToolInput), "critical findings in tool output"))
 		}
 		out := sanitize.Apply(s, v)
-		if h.RedactOn {
-			out = redact.Mask(out, redact.Find(out, h.Redact))
-		}
-		return out
+		return mask(out)
 	})
 	// The official hook payload has no authorized user task. Observe the raw JSON
 	// as data; tool_input/tool_response must never populate Observer.Task.
