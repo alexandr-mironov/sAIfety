@@ -19,7 +19,7 @@ type Kind string
 
 const (
 	KindSecret Kind = "secret" // API keys, tokens, private keys
-	KindPII    Kind = "pii"    // Russian names and RF mobile phones
+	KindPII    Kind = "pii"    // Russian names, RF mobile phones, email
 	KindAuth   Kind = "auth"   // Authorization headers, credentials in URLs
 	KindCustom Kind = "custom" // matched a user keyword denylist entry
 )
@@ -46,7 +46,7 @@ type Options struct {
 	MinEntropy float64
 }
 
-// DefaultOptions masks credentials, Russian names and RF mobiles, without a model.
+// DefaultOptions masks credentials, Russian names, RF mobiles and email, without a model.
 var DefaultOptions = Options{}
 
 // Find returns all matches in text, sorted by position, de-overlapped so a

@@ -15,7 +15,7 @@ func TestRussianPIIPreservesNonpersonalResults(t *testing.T) {
 		`{"content":[{"type":"text","text":"first_name: String\nlast_name: String"}]}`,
 		`{"structuredContent":{"account":{"status":"active","plan":"team"},"phone":{"type":"string"},"first_name":{"type":"string"}}}`,
 		`{"structuredContent":{"order_number":79165550132,"order_id":"89165550132","amount":79165550132.25,"negative":-79165550132}}`,
-		`{"structuredContent":{"order_number":"12379165550132","foreign_phone":"+1 (415) 555-0132","email":"demo@fixture.invalid","card":"4111111111111111"}}`,
+		`{"structuredContent":{"order_number":"12379165550132","foreign_phone":"+1 (415) 555-0132","card":"4111111111111111"}}`,
 		`{"content":[{"type":"text","text":"Номер заказа: 79165550132"}],"structuredContent":{"id":9007199254740993}}`,
 		`{"content":[{"type":"resource","resource":{"uri":"file:///fixture","text":"План Поставки"}}],"_meta":{"account":{"status":"ok"}}}`,
 	} {

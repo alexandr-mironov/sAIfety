@@ -95,6 +95,34 @@ func TestPIIZeroWidthSplitDoesNotSurviveNormalization(t *testing.T) {
 	}
 }
 
+// TestPIIEmailMaskedInToolResult covers email, a direct personal identifier in
+// corporate results, across a textual field, a structured field and an
+// invisible-split copy. Non-email tokens that merely contain an "@" (package
+// refs, bare user@host without a TLD) must survive so ordinary output is kept.
+func TestPIIEmailMaskedInToolResult(t *testing.T) {
+	const zwsp = "​"
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"Написал demo.person@corp.example по вопросу."}],` +
+		`"structuredContent":{"email":"user+tag@corp.example.com","split":"hidden` + zwsp + `.person@corp.example","ref":"@scope/pkg","host":"deploy@buildserver"}}`)
+	p := piiProxy()
+	out, d := p.inspectToolResult(context.Background(), "fixture/read", false, raw)
+	got := string(mustJSON(out))
+
+	for _, leak := range []string{"demo.person@corp.example", "user+tag@corp.example.com", "hidden.person@corp.example"} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("email leaked to the agent: %q in %s (%+v)", leak, got, d)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED:") {
+		t.Fatalf("expected a redacted result, got %s", got)
+	}
+	// Non-email "@" tokens are not personal data and must be preserved.
+	for _, keep := range []string{"@scope/pkg", "deploy@buildserver"} {
+		if !strings.Contains(got, keep) {
+			t.Fatalf("benign @-token wrongly removed: want %q in %s", keep, got)
+		}
+	}
+}
+
 // TestPIIRecordListMaskedInPlacePreservingStructure checks recursive masking
 // through an array of person objects (a realistic "list customers" result).
 // Every name and phone is masked using its field context, while the JSON shape

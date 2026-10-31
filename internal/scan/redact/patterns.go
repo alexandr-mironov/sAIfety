@@ -32,6 +32,12 @@ var patterns = []pattern{
 	{KindSecret, "jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`), 0.9, nil},
 	{KindSecret, "generic_secret", regexp.MustCompile(`(?i)\b(?:api[_-]?key|secret|token|passwd|password|access[_-]?key)\b\s*[:=]\s*["']([^"'\s]{8,})["']`), 0.6, nil},
 
+	// --- personal data ---
+	// Email addresses are a direct personal identifier in corporate results.
+	// Requires a dotted TLD of letters, so version strings (1.0.0), package
+	// refs (@scope/pkg) and bare user@host tokens without a TLD do not match.
+	{KindPII, "email", regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}\b`), 0.9, nil},
+
 	// --- auth ---
 	{KindAuth, "auth_header", regexp.MustCompile(`(?i)authorization\s*:\s*(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})`), 0.85, nil},
 	{KindAuth, "url_credentials", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^/\s:@]+)@`), 0.8, nil},
