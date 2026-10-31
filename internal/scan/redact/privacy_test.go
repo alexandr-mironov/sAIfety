@@ -1,179 +1,131 @@
 package redact
 
 import (
-	"errors"
 	"strings"
 	"testing"
-
-	"github.com/sugarme/tokenizer"
 )
 
-func TestFullMasking(t *testing.T) {
-	for _, text := range []string{
-		"+7 916 555-01-32", "79165550132", "9165550132",
-		"demo.person@example.invalid", "пример@пример.рф",
-		"demo.person [at] example [dot] invalid",
-		"4111 1111 1111 1111", "4111111111111111",
-		"Иванов Иван Иванович", "Иван Петров", "Jonathan Whitfield",
-		"192.0.2.42", "2001:db8::42", "::1",
-		"DE89370400440532013000",
+func TestRussianNamesAndMobileFullMask(t *testing.T) {
+	for _, value := range []string{
+		"Иванов Иван Иванович", "Иван Иванович Иванов", "Дроздов Елисей Мефодьевич", "Раиса Викторовна Кострова",
+		"Алина Белова", "Иван Петров", "Марии Петровой", "Сергею Иванову",
+		"Анна-Мария Петрова-Сидорова", "Иванов И.И.", "И. И. Иванов",
+		"79165550132", "89165550132", "+79165550132", "+7(916)555-01-32", "8 (916) 555 01 32",
+		"+7\u00a0(916)\u00a0555–01–32", "+7\u202f916\u202f555\u202f01\u202f32",
 		"AKIAIOSFODNN7EXAMPLE", "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
-		"sk_live_1234567890abcdefgh",
 	} {
-		t.Run(text, func(t *testing.T) {
-			got, err := Text(text, DefaultOptions)
-			if err != nil || !strings.HasPrefix(got, "[REDACTED:") || !strings.HasSuffix(got, "]") {
-				t.Fatalf("not fully masked: %q, %v", got, err)
-			}
-			if strings.Count(got, "[REDACTED:") != 1 {
-				t.Fatalf("value was split instead of fully masked: %q", got)
+		t.Run(value, func(t *testing.T) {
+			got, err := Text(value, DefaultOptions)
+			if err != nil || !strings.HasPrefix(got, "[REDACTED:") || !strings.HasSuffix(got, "]") || strings.Count(got, "[REDACTED:") != 1 {
+				t.Fatalf("incomplete mask: %q, %v", got, err)
 			}
 		})
 	}
-}
-
-func TestLabelledPersonalData(t *testing.T) {
-	for _, tc := range []struct{ text, value string }{
-		{"Паспорт: 45 08 123456", "45 08 123456"},
-		{"СНИЛС: 112-233-445 95", "112-233-445 95"},
-		{"ИНН: 123456789012", "123456789012"},
-		{"Дата рождения: 14.02.1990", "14.02.1990"},
-		{"Адрес: г. Тестоград, ул. Примерная, д. 42, кв. 7", "Тестоград"},
-		{"Расчётный счёт: 40817810099910004312", "40817810099910004312"},
-		{"姓名：张伟", "张伟"},
-		{"First name: Alex", "Alex"},
+	for _, tc := range []struct{ input, want string }{
+		{"Протокол подписала Алина Белова после обсуждения.", "Протокол подписала [REDACTED:full_name] после обсуждения."},
+		{"Контактное лицо: Раиса Викторовна Кострова.", "Контактное лицо: [REDACTED:full_name]."},
+		{"ФИО: иван петрович ким", "ФИО: [REDACTED:full_name]"},
+		{"Фамилия: Петров", "Фамилия: [REDACTED:full_name]"},
+		{"Имя: Иван", "Имя: [REDACTED:full_name]"},
+		{"Ответственный за согласование: елисей мефодьевич ким.", "Ответственный за согласование: [REDACTED:full_name]."},
+		{"Согласовал Иван Иванович вчера.", "Согласовал [REDACTED:full_name] вчера."},
 	} {
-		got, err := Text(tc.text, DefaultOptions)
-		if err != nil || strings.Contains(got, tc.value) || !strings.Contains(got, "[REDACTED:") {
-			t.Errorf("not masked: %q => %q, %v", tc.text, got, err)
+		got, err := Text(tc.input, DefaultOptions)
+		if err != nil || got != tc.want {
+			t.Errorf("%q => %q, want %q (%v)", tc.input, got, tc.want, err)
 		}
 	}
 }
 
-func TestSensitiveFieldContext(t *testing.T) {
-	for _, tc := range []struct{ key, value string }{
-		{"first_name", "Иван"}, {"lastName", "Петров"}, {"patronymic", "Иванович"},
-		{"phone", "79165550132"}, {"card", "4111111111111111"},
-		{"passport_series", "4508"}, {"passport_number", "123456"},
-		{"birth_date", "1990-02-14"}, {"inn", "123456789012"},
-		{"city", "Тестоград"}, {"account", "40817810099910004312"},
-		{"姓名", "张伟"},
+func TestRussianPIINegativeControls(t *testing.T) {
+	for _, value := range []string{
+		"Роман готов к печати.", "Любовь к книгам полезна.", "Release Overview", "План Поставки", "Статус Сборки", "Нижний Новгород", "Красный Октябрь",
+	} {
+		got, err := Text(value, DefaultOptions)
+		if err != nil || got != value {
+			t.Errorf("false name: %q => %q", value, got)
+		}
+	}
+	for _, value := range []string{
+		"first_name: String\nlast_name: String", "Имя: строка; Фамилия: строка", "return user.first_name",
+		"+1 (415) 555-0132", "+44 7700 900123", "+7 (495) 555-01-32", "9165550132",
+		"+89165550132", "1791655501320", "791655501321", "7916555013", "sku-79165550132-x",
+		"79165550132-123", "7916-555-0132-9", "2026-10-31 12:34:56", "value=9007199254740993",
+		"demo.person@example.invalid", "192.0.2.42", "2001:db8::42", "4111111111111111",
+		"Паспорт: 45 08 123456", "СНИЛС: 112-233-445 95", "ИНН: 123456789012",
+		"Дата рождения: 14.02.1990", "Адрес: город Тестоград, дом 42", "Jonathan Whitfield",
+		"Номер заказа: 79165550132", "Order #89165550132", "order_id=79165550132",
+	} {
+		got, err := Text(value, DefaultOptions)
+		if err != nil || got != value {
+			t.Errorf("false redaction: %q => %q, %v", value, got, err)
+		}
+	}
+	// Synthetic three-digit business prefixes followed by counters of different lengths.
+	for _, prefix := range []string{"123", "234", "345", "456", "567", "678", "900"} {
+		for _, counter := range []string{"9", "1234567", "12345678", "123456789", "79165550132"} {
+			input := prefix + counter
+			got, err := Text(input, DefaultOptions)
+			if err != nil || got != input {
+				t.Errorf("order changed: %s => %s", input, got)
+			}
+		}
+	}
+}
+
+func TestRussianFieldContext(t *testing.T) {
+	for _, tc := range []struct{ key, value, label string }{
+		{"first_name", "Иван", "full_name"}, {"firstName", "Елисей", "full_name"}, {"lastName", "Ким", "full_name"}, {"patronymic", "Иванович", "full_name"},
+		{"phone", "79165550132", "phone"}, {"fio", "Иванов Иван Иванович", "full_name"},
+		{"first_name", "[REDACTED:full_name] Иван", "full_name"},
 	} {
 		got, err := Field(tc.key, tc.value, DefaultOptions)
-		if err != nil || got != Placeholder(FieldLabel(tc.key)) {
-			t.Errorf("field %s => %q, %v", tc.key, got, err)
+		if err != nil || got != Placeholder(tc.label) {
+			t.Errorf("%s=%s => %s, %v", tc.key, tc.value, got, err)
 		}
 	}
-	for _, key := range []string{"id", "count", "date", "number", "cardinality", "username"} {
-		if label := FieldLabel(key); label != "" {
-			t.Errorf("generic key %s considered sensitive: %s", key, label)
-		}
-	}
-}
-
-func TestPrivacyNegativeControls(t *testing.T) {
-	for _, text := range []string{
-		"The build completed successfully.", "2026-10-30 12:34:56",
-		"Order #1234567890", "value=9007199254740993", "1.2.3", "12:34:56",
-		"Проект собрали в срок.", "return user.first_name", "date: 2026-10-30",
+	for _, tc := range []struct{ key, value string }{
+		{"first_name", "String"}, {"first_name", "строка"}, {"last_name", "не указано"}, {"phone", "feature disabled"},
+		{"account", "active"}, {"city", "Тестоград"}, {"order_number", "79165550132"}, {"order_id", "89165550132"},
 	} {
-		got, err := Text(text, DefaultOptions)
-		if err != nil || got != text {
-			t.Errorf("false redaction: %q => %q, %v", text, got, err)
+		got, err := Field(tc.key, tc.value, DefaultOptions)
+		if err != nil || got != tc.value {
+			t.Errorf("false field redaction: %+v => %s", tc, got)
+		}
+	}
+	// Order context cannot bypass a secret or a decorated phone.
+	for _, v := range []string{"AKIAIOSFODNN7EXAMPLE", "+79165550132"} {
+		got, _ := Field("order_number", v, DefaultOptions)
+		if got == v {
+			t.Fatalf("order exemption bypassed protection: %s", v)
 		}
 	}
 	opts := DefaultOptions
-	opts.Allowlist = []string{"demo.person@example.invalid"}
-	got, err := Field("email", "demo.person@example.invalid", opts)
-	if err != nil || got != "demo.person@example.invalid" {
-		t.Fatal("explicit allowlist ignored", got, err)
+	opts.Allowlist = []string{"Иван Петров"}
+	if got, _ := Text("Иван Петров", opts); got != "Иван Петров" {
+		t.Fatal("operator allowlist ignored")
 	}
-	opts.MaskIP = false
-	for _, text := range []string{"192.0.2.42", "2001:db8::42"} {
-		if got, err := Field("ip", text, opts); err != nil || got != text {
-			t.Fatal("explicit IP exception ignored", got, err)
+}
+
+func TestOrderMarkerHasWordBoundary(t *testing.T) {
+	for _, input := range []string{"disorder: 79165550132", "preorder_id=79165550132"} {
+		got, err := Text(input, DefaultOptions)
+		if err != nil || strings.Contains(got, "79165550132") {
+			t.Fatal("non-order substring bypassed mobile check", got, err)
 		}
 	}
 }
 
 func TestCrossingSpansDoNotExposeTail(t *testing.T) {
-	matches := dedupe([]Match{
-		{Kind: KindPII, Label: "phone", Start: 0, End: 7},
-		{Kind: KindPII, Label: "credit_card", Start: 4, End: 10},
-	})
+	matches := dedupe([]Match{{Kind: KindPII, Label: "phone", Start: 0, End: 7}, {Kind: KindSecret, Label: "secret", Start: 4, End: 10}})
 	if got := Mask("0123456789", matches); strings.ContainsAny(got, "0123456789") {
-		t.Fatal("overlapping tail leaked:", got)
+		t.Fatal("crossing span leaked", got)
 	}
 }
 
 func TestNormalizedPIIDoesNotKeepOriginalCopy(t *testing.T) {
-	text := "demo.per\u200bson@example.invalid"
-	got, err := Text(text, DefaultOptions)
+	got, err := Text("+7916\u200b5550132", DefaultOptions)
 	if err != nil || got != Placeholder("normalized_pii") {
-		t.Fatal("invisible-character copy retained", got, err)
-	}
-}
-
-type failedNER struct{}
-
-func (failedNER) Recognize(string) []Match { return nil }
-func (failedNER) RecognizeChecked(string) ([]Match, error) {
-	return nil, errors.New("fixture inference error")
-}
-
-func TestCheckedNERFailureIsNotNoMatch(t *testing.T) {
-	if _, err := Text("unrecognized entity", DefaultOptions.WithNER(failedNER{})); err == nil {
-		t.Fatal("failed enabled model treated as successful inspection")
-	}
-	if _, err := Text("plain", DefaultOptions.WithNERError(errors.New("init failed"))); err == nil {
-		t.Fatal("initialization failure ignored")
-	}
-}
-
-func TestNERWindowCoverageAndLimits(t *testing.T) {
-	encoding := func(n int) *tokenizer.Encoding {
-		en := &tokenizer.Encoding{Ids: make([]int, n), Offsets: make([][]int, n), SpecialTokenMask: make([]int, n)}
-		for i := range n {
-			en.Ids[i], en.Offsets[i] = i, []int{i * 2, i*2 + 2}
-		}
-		en.SpecialTokenMask[0], en.SpecialTokenMask[n-1] = 1, 1
-		en.Offsets[0], en.Offsets[n-1] = []int{0, 0}, []int{0, 0}
-		return en
-	}
-	for _, n := range []int{2, 511, 512, 513, 1024, 4000} {
-		en := encoding(n)
-		windows, err := nerWindows(en)
-		if err != nil {
-			t.Fatal(err)
-		}
-		seen := map[int]bool{}
-		for _, window := range windows {
-			if len(window.Ids) > nerMaxSeq || window.Ids[0] != en.Ids[0] ||
-				window.Ids[len(window.Ids)-1] != en.Ids[n-1] {
-				t.Fatal("invalid window")
-			}
-			for i, id := range window.Ids {
-				seen[id] = true
-				if id > 0 && id < n-1 && window.Offsets[i][0] != en.Offsets[id][0] {
-					t.Fatal("original offsets changed")
-				}
-			}
-		}
-		if len(seen) != n {
-			t.Fatalf("missing token coverage: %d/%d", len(seen), n)
-		}
-	}
-	if windows, err := nerWindows(encoding(nerMaxSeq * (nerMaxWindows + 1))); err == nil || windows != nil {
-		t.Fatal("over-limit input returned a successful prefix")
-	}
-	en := encoding(600)
-	en.SpecialTokenMask = nil
-	if _, err := nerWindows(en); err == nil {
-		t.Fatal("missing special-token contract accepted")
-	}
-	en = encoding(10)
-	en.Overflowing = []tokenizer.Encoding{{}}
-	if _, err := nerWindows(en); err == nil {
-		t.Fatal("truncated tokenizer output accepted")
+		t.Fatal("normalized copy survived", got, err)
 	}
 }

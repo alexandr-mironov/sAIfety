@@ -26,26 +26,6 @@ func DefaultBundle() (Bundle, error) {
 	}, nil
 }
 
-// PIIBundle is the optional personal-data NER model sAIfety can provision:
-// a DistilBERT fine-tuned for PII (BIO token classification). Cached under
-// distinct filenames so it does not collide with the injection model.
-func PIIBundle() (Bundle, error) {
-	// Multilingual NER (bert-base-multilingual-cased fine-tuned for NER).
-	// Trained on 10 languages; generalizes to others (incl. Russian) for
-	// person names thanks to the multilingual base. Quantized ONNX.
-	const hf = "https://huggingface.co/Xenova/bert-base-multilingual-cased-ner-hrl/resolve/main"
-	rt, err := runtimeArtifact()
-	if err != nil {
-		return Bundle{}, err
-	}
-	return Bundle{
-		Model:     Artifact{Name: "pii-model.onnx", URL: hf + "/onnx/model_quantized.onnx", Size: 178495423},
-		Tokenizer: Artifact{Name: "pii-tokenizer.json", URL: hf + "/tokenizer.json"},
-		Config:    Artifact{Name: "pii-config.json", URL: hf + "/config.json"},
-		Runtime:   rt,
-	}, nil
-}
-
 // ortVersion is the ONNX Runtime release whose C API (21) matches the
 // onnxruntime_go binding used by the onnx build.
 const ortVersion = "1.22.0"

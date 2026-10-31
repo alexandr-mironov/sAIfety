@@ -39,14 +39,13 @@ type RedactConfig struct {
 	Keywords []string `json:"keywords"`
 	// Allowlist are substrings that must never be redacted.
 	Allowlist []string `json:"allowlist"`
-	// KeepIP leaves IP addresses unmasked (default: they are masked).
+	// Deprecated: IP addresses are outside the PII profile.
 	KeepIP bool `json:"keepIP"`
 	// MinEntropy enables generic high-entropy token masking when > 0.
 	MinEntropy float64 `json:"minEntropy"`
-	// NoModel disables the PII NER model even when it is present.
+	// Deprecated: NER is never loaded; retained for existing config files.
 	NoModel bool `json:"noModel"`
-	// NERLabels overrides which NER entities to mask (default: persons and
-	// dates). E.g. ["PER","LOC","ORG","DATE"].
+	// Deprecated: NER labels have no effect.
 	NERLabels []string `json:"nerLabels"`
 }
 

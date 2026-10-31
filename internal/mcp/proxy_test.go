@@ -46,10 +46,10 @@ func fakeUpstream() {
 		case "tools/list":
 			if os.Getenv("SAIFETY_FAKE_PII") == "1" {
 				_ = c.Write(Reply(m, map[string]any{"tools": []Tool{
-					{Name: "pii_default", Description: "Contact demo.person@example.invalid",
-						InputSchema: json.RawMessage(`{"type":"object","properties":{"email":{"type":"string","default":"demo.person@example.invalid"}}}`)},
+					{Name: "pii_default", Description: "Contact +79165550132",
+						InputSchema: json.RawMessage(`{"type":"object","properties":{"phone":{"type":"string","default":"+79165550132"}}}`)},
 					{Name: "pii_enum", Description: "Fixture",
-						InputSchema: json.RawMessage(`{"type":"object","properties":{"email":{"enum":["demo.person@example.invalid"]}}}`)},
+						InputSchema: json.RawMessage(`{"type":"object","properties":{"phone":{"enum":["+79165550132"]}}}`)},
 				}}))
 				continue
 			}

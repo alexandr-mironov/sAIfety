@@ -30,7 +30,7 @@ Usage:
   saifety proxy  [flags]                run MCP aggregating proxy over stdio
   saifety hook   <event>                Claude Code hook adapter (stdin JSON)
   saifety launch [flags] [dir] [-- args] scan, then start claude safely
-  saifety model  <pull|status|path>     manage optional injection and PII models
+  saifety model  <pull|status|path>     manage optional injection model
   saifety statistics [scan|proxy|hook] [-json] [-reset]  detected-threat counters
   saifety install   <claude-code|claude-desktop|cursor|windsurf|vscode|all> [-dry-run]
   saifety uninstall <same targets>
