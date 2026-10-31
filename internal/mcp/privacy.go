@@ -19,6 +19,12 @@ type privacyChange struct {
 	changed, protected, numeric bool
 }
 
+func (c *privacyChange) merge(other privacyChange) {
+	c.changed = c.changed || other.changed
+	c.protected = c.protected || other.protected
+	c.numeric = c.numeric || other.numeric
+}
+
 // redactValue operates on decoded values with their field context. Numeric
 // values are inspected without float64 conversion; a masked number is later
 // rendered as text instead of silently violating a tool's structured schema.
@@ -28,9 +34,19 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 	}
 	switch value := value.(type) {
 	case map[string]any:
+		if personalFieldSchema(value, field) {
+			if err := p.redactSchema(ctx, value, field, change); err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				change.protected = true // Never broaden a schema constraint.
+				return value, nil
+			}
+			return value, nil
+		}
 		for key, item := range value {
 			keyField := ""
-			if redact.FieldLabel(field) != "" && redact.FieldLabel(key) == "" {
+			if redact.FieldLabel(field) != "" && redact.FieldLabel(key) == "" && !personContainerKey(key) {
 				keyField = field
 			}
 			maskedKey, err := redact.Field(keyField, key, p.Redact)
@@ -49,12 +65,23 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 			child := resultChild(value, location, key)
 			childField := key
 			if redact.FieldLabel(key) == "" && redact.FieldLabel(field) != "" {
-				childField = field
+				if redact.PersonField(field) {
+					if !personMetadataValue(key, item) {
+						childField = field
+					}
+				} else if !personContainerKey(key) || personValueCarrier(key) {
+					childField = field
+				}
 			}
-			updated, err := p.redactValue(ctx, item, child, childField, change)
+			childChange := privacyChange{}
+			updated, err := p.redactValue(ctx, item, child, childField, &childChange)
 			if err != nil {
 				return nil, err
 			}
+			if redact.PersonField(field) && (key == "enum" || key == "const") && (childChange.changed || childChange.protected) {
+				childChange.protected = true
+			}
+			change.merge(childChange)
 			if (location == resultProtocol || (location == resultBlock || location == resultResource) &&
 				(key == "type" || key == "uri" || key == "mimeType")) && !sameScalar(item, updated) {
 				change.protected = true
@@ -107,6 +134,28 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 		}
 	}
 	return value, nil
+}
+
+// Descriptor keys are structure, not a person's name used as a JSON key.
+// Exempting a metadata value additionally requires personMetadataValue.
+func personValueCarrier(key string) bool {
+	switch key {
+	case "value", "values", "text", "parts", "components", "default", "example", "examples", "enum", "const":
+		return true
+	}
+	return false
+}
+
+func personContainerKey(key string) bool {
+	if schemaKeywords[key] || schemaAnnotationKeys[key] || personValueCarrier(key) {
+		return true
+	}
+	switch key {
+	case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas",
+		"enabled", "visible", "hidden", "disabled", "editable", "widget", "label", "language", "lang", "locale", "encoding":
+		return true
+	}
+	return false
 }
 
 // Inspect equivalent integer spellings (decimal/exponent) without float64 or

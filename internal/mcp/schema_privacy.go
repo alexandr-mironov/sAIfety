@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
 )
@@ -25,7 +26,8 @@ func (p *Proxy) redactTool(ctx context.Context, tool Tool) (Tool, bool) {
 	if err != nil {
 		return Tool{}, false
 	}
-	if err := p.redactSchema(ctx, schema, ""); err != nil {
+	schemaChange := privacyChange{}
+	if err := p.redactSchema(ctx, schema, "", &schemaChange); err != nil {
 		return Tool{}, false
 	}
 	tool.InputSchema, err = json.Marshal(schema)
@@ -49,7 +51,7 @@ func (p *Proxy) redactTool(ctx context.Context, tool Tool) (Tool, bool) {
 	return tool, true
 }
 
-func (p *Proxy) redactSchema(ctx context.Context, value any, field string) error {
+func (p *Proxy) redactSchema(ctx context.Context, value any, field string, change *privacyChange) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -62,29 +64,45 @@ func (p *Proxy) redactSchema(ctx context.Context, value any, field string) error
 			}
 			switch key {
 			case "default", "examples", "example":
-				change := privacyChange{}
-				if _, err := p.redactValue(ctx, item, resultOther, field, &change); err != nil {
+				itemChange := privacyChange{}
+				if _, err := p.redactValue(ctx, item, resultOther, field, &itemChange); err != nil {
 					return err
 				}
-				if change.changed || change.protected {
+				if itemChange.changed || itemChange.protected {
 					delete(value, key)
+					change.changed = true
 				}
 			case "description", "title":
+				if redact.PersonField(field) && !personMetadataValue(key, item) {
+					itemChange := privacyChange{}
+					updated, err := p.redactValue(ctx, item, resultOther, field, &itemChange)
+					if err != nil {
+						return err
+					}
+					if itemChange.protected || itemChange.numeric {
+						delete(value, key) // An annotation may be dropped, never rename its keys.
+					} else {
+						value[key] = updated
+					}
+					change.changed = change.changed || itemChange.changed || itemChange.protected || itemChange.numeric
+					continue
+				}
 				if text, ok := item.(string); ok {
 					masked, err := redact.Text(text, p.Redact)
 					if err != nil {
 						return err
 					}
 					value[key] = masked
-				} else if err := p.redactSchema(ctx, item, field); err != nil {
+					change.changed = change.changed || masked != text
+				} else if err := p.redactSchema(ctx, item, field, change); err != nil {
 					return err
 				}
 			case "enum", "const":
-				change := privacyChange{}
-				if _, err := p.redactValue(ctx, item, resultOther, field, &change); err != nil {
+				itemChange := privacyChange{}
+				if _, err := p.redactValue(ctx, item, resultOther, field, &itemChange); err != nil {
 					return err
 				}
-				if change.changed || change.protected {
+				if itemChange.changed || itemChange.protected {
 					return fmt.Errorf("sensitive schema constraint")
 				}
 			case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas":
@@ -94,33 +112,37 @@ func (p *Proxy) redactSchema(ctx context.Context, value any, field string) error
 						if err != nil || masked != name {
 							return fmt.Errorf("sensitive schema identifier")
 						}
-						if err := p.redactSchema(ctx, schema, name); err != nil {
+						if err := p.redactSchema(ctx, schema, name, change); err != nil {
 							return err
 						}
 					}
-				} else if err := p.redactSchema(ctx, item, field); err != nil {
+				} else if err := p.redactSchema(ctx, item, field, change); err != nil {
 					return err
 				}
 			default:
 				// Check all extensions and nested constraints, preserving their
 				// meaning exactly or omitting the whole tool on sensitive data.
 				if !schemaKeywords[key] {
-					change := privacyChange{}
-					if _, err := p.redactValue(ctx, item, resultOther, key, &change); err != nil {
+					itemField := key
+					if redact.PersonField(field) && !personMetadataValue(key, item) {
+						itemField = field
+					}
+					itemChange := privacyChange{}
+					if _, err := p.redactValue(ctx, item, resultOther, itemField, &itemChange); err != nil {
 						return err
 					}
-					if change.changed || change.protected {
+					if itemChange.changed || itemChange.protected {
 						return fmt.Errorf("sensitive schema extension")
 					}
 				}
-				if err := p.redactSchema(ctx, item, field); err != nil {
+				if err := p.redactSchema(ctx, item, field, change); err != nil {
 					return err
 				}
 			}
 		}
 	case []any:
 		for _, item := range value {
-			if err := p.redactSchema(ctx, item, field); err != nil {
+			if err := p.redactSchema(ctx, item, field, change); err != nil {
 				return err
 			}
 		}
@@ -151,4 +173,49 @@ var schemaKeywords = map[string]bool{
 	"exclusiveMaximum": true, "multipleOf": true, "minLength": true, "maxLength": true,
 	"pattern": true, "format": true, "contentEncoding": true, "contentMediaType": true,
 	"contentSchema": true, "readOnly": true, "writeOnly": true, "deprecated": true,
+}
+
+var schemaAnnotationKeys = map[string]bool{"description": true, "title": true, "default": true, "examples": true, "example": true}
+
+// A typed, keyword-only descriptor under a person field is schema, not a name.
+// Unknown shapes keep the conservative data walk, including protected-key checks.
+func personalFieldSchema(value map[string]any, field string) bool {
+	if !redact.PersonField(field) {
+		return false
+	}
+	typeOK := func(v any) bool {
+		s, ok := v.(string)
+		if !ok {
+			return false
+		}
+		switch s {
+		case "string", "number", "integer", "boolean", "object", "array", "null":
+			return true
+		}
+		return false
+	}
+	valid := typeOK(value["type"])
+	if types, ok := value["type"].([]any); ok && len(types) > 0 {
+		valid = true
+		for _, t := range types {
+			valid = valid && typeOK(t)
+		}
+	}
+	if !valid {
+		return false
+	}
+	for key := range value {
+		if schemaKeywords[key] || schemaAnnotationKeys[key] {
+			continue
+		}
+		switch key {
+		case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas", "enum", "const":
+			continue
+		}
+		if (personContainerKey(key) && !personValueCarrier(key)) || strings.HasPrefix(key, "x-") {
+			continue
+		}
+		return false
+	}
+	return true
 }

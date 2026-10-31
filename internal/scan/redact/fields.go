@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/saifety-org/sAIfety/internal/scan/normalize"
 )
 
 // Fields provide context, not permission to mask arbitrary configuration.
@@ -29,6 +31,18 @@ func fieldKey(s string) string {
 
 func FieldLabel(field string) string { return fieldLabels[fieldKey(field)] }
 
+// PersonField is an explicit person-data contract, not a general object name.
+// Ambiguous legacy contact/customer names retain their heuristic behavior.
+func PersonField(field string) bool {
+	switch fieldKey(field) {
+	case "firstname", "givenname", "lastname", "surname", "familyname",
+		"patronymic", "middlename", "fullname", "personname", "fio",
+		"имя", "фамилия", "отчество", "фио":
+		return true
+	}
+	return false
+}
+
 func orderField(field string) bool {
 	switch fieldKey(field) {
 	case "orderid", "ordernumber", "orderno", "номерзаказа", "идентификаторзаказа":
@@ -52,35 +66,85 @@ func Field(field, text string, opts Options) (string, error) {
 }
 
 func personalFieldValue(field, text string) bool {
-	key := fieldKey(field)
+	if PersonField(field) {
+		value := strings.Join(strings.Fields(normalize.Text(text)), " ")
+		if value == "" || value == Placeholder("full_name") || nonPersonLiteral(value) {
+			return false
+		}
+		// A malformed spelling, encoded string or forged placeholder must not
+		// exempt a declared person's value. Do not guess its language/ethnicity.
+		return strings.ContainsFunc(value, unicode.IsLetter)
+	}
 	value := strings.TrimSpace(text)
 	// A forged placeholder does not exempt a remaining component.
 	value = strings.TrimSpace(strings.TrimPrefix(value, Placeholder("full_name")))
-	parts := strings.Fields(value)
-	if len(parts) == 1 && nameToken(value) {
-		switch key {
-		case "firstname", "givenname":
-			return true
-		case "имя":
-			return isGiven(value)
-		case "patronymic", "middlename", "отчество":
-			return patronymicEnding.MatchString(value)
-		case "lastname", "surname", "familyname", "фамилия":
-			return true
-		}
-	}
 	return len(russianNames(value)) > 0
 }
 
-var nameLabel = regexp.MustCompile(`(?im)(?:^|[^\p{L}\p{N}_])((?:first|last|given|family|full)[_ -]?name|patronymic|имя|фамилия|отчество|фио)[ \t]*[:=：][ \t]*([^\r\n;,]+)`)
+var nameTypeLiteral = regexp.MustCompile(`(?i)^(?:(?:string|str|text|integer|int|int32|int64|number|float|float64|double|bool|boolean|object|array|null|строка|число|целое|логическое)(?:[?!]|[ \t]*\|[ \t]*null)?|optional\[(?:str|string)\]|(?:n?varchar|char|character varying)\([0-9]{1,5}\))$`)
+
+func nonPersonLiteral(value string) bool {
+	if nameTypeLiteral.MatchString(value) {
+		return true
+	}
+	switch strings.ToLower(value) {
+	case "none", "undefined", "unknown", "unset", "n/a", "not provided", "not specified",
+		"не указано", "не указан", "не указана", "не задано", "неизвестно", "отсутствует", "нет", "пусто":
+		return true
+	}
+	return false
+}
+
+// Quoted values are captured without their quotes, preserving JSON/SQL-style
+// punctuation in text copies. This is field syntax, not a title-case heuristic.
+var nameLabel = regexp.MustCompile(`(?im)(?:^|[^\p{L}\p{N}_])["']?((?:first|last|given|family|full|person)[_ -]?name|patronymic|middle[_ -]?name|surname|fio|имя|фамилия|отчество|фио)["']?[ \t]*[:=：][ \t]*(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)'|([^\r\n;,]+))`)
+
+var nameTypeContext = regexp.MustCompile(`(?is)(?:^|[;\r\n])[ \t]*(?:export[ \t]+)?(?:interface|type|class|struct)[ \t]+[\p{L}\p{N}_]+[^{}]*\{[^}]*$`)
+
+func plainNameValue(value string) bool {
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsSpace(r) || strings.ContainsRune(".'’ʼ-‐‑–—", r) {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
 func labelledMatches(text string) []Match {
 	var out []Match
 	for _, m := range nameLabel.FindAllStringSubmatchIndex(text, -1) {
-		field, value := text[m[2]:m[3]], text[m[4]:m[5]]
-		value = strings.TrimRight(value, " .!?")
+		field := text[m[2]:m[3]]
+		start, end := -1, -1
+		for group := 4; group < len(m); group += 2 {
+			if m[group] >= 0 {
+				start, end = m[group], m[group+1]
+				break
+			}
+		}
+		if start < 0 {
+			continue
+		}
+		value := text[start:end]
+		if m[8] >= 0 {
+			value = strings.TrimRight(value, " .!?")
+			if !plainNameValue(value) || nameTypeContext.MatchString(text[max(0, m[2]-1024):m[2]]) {
+				continue
+			}
+			// An unquoted lower-case assignment is commonly a variable, not a
+			// literal personal value. Quoted data and colon labels stay covered.
+			if strings.Contains(text[m[3]:start], "=") && strings.TrimSpace(value) == strings.ToLower(strings.TrimSpace(value)) && !strings.ContainsAny(value, " \t") {
+				ascii := true
+				for _, r := range value {
+					ascii = ascii && r < 128
+				}
+				if ascii {
+					continue
+				}
+			}
+		}
 		if personalFieldValue(field, value) {
-			out = append(out, Match{Kind: KindPII, Label: "full_name", Start: m[4], End: m[4] + len(value), Confidence: 0.9})
+			out = append(out, Match{Kind: KindPII, Label: "full_name", Start: start, End: start + len(value), Confidence: 0.9})
 		}
 	}
 	return out
