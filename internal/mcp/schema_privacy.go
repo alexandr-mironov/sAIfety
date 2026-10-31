@@ -26,7 +26,8 @@ func (p *Proxy) redactTool(ctx context.Context, tool Tool) (Tool, bool) {
 	if err != nil {
 		return Tool{}, false
 	}
-	if err := p.redactSchema(ctx, schema, ""); err != nil {
+	schemaChange := privacyChange{}
+	if err := p.redactSchema(ctx, schema, "", &schemaChange); err != nil {
 		return Tool{}, false
 	}
 	tool.InputSchema, err = json.Marshal(schema)
@@ -50,7 +51,7 @@ func (p *Proxy) redactTool(ctx context.Context, tool Tool) (Tool, bool) {
 	return tool, true
 }
 
-func (p *Proxy) redactSchema(ctx context.Context, value any, field string) error {
+func (p *Proxy) redactSchema(ctx context.Context, value any, field string, change *privacyChange) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -63,29 +64,45 @@ func (p *Proxy) redactSchema(ctx context.Context, value any, field string) error
 			}
 			switch key {
 			case "default", "examples", "example":
-				change := privacyChange{}
-				if _, err := p.redactValue(ctx, item, resultOther, field, &change); err != nil {
+				itemChange := privacyChange{}
+				if _, err := p.redactValue(ctx, item, resultOther, field, &itemChange); err != nil {
 					return err
 				}
-				if change.changed || change.protected {
+				if itemChange.changed || itemChange.protected {
 					delete(value, key)
+					change.changed = true
 				}
 			case "description", "title":
+				if redact.PersonField(field) && !personMetadataValue(key, item) {
+					itemChange := privacyChange{}
+					updated, err := p.redactValue(ctx, item, resultOther, field, &itemChange)
+					if err != nil {
+						return err
+					}
+					if itemChange.protected || itemChange.numeric {
+						delete(value, key) // An annotation may be dropped, never rename its keys.
+					} else {
+						value[key] = updated
+					}
+					change.changed = change.changed || itemChange.changed || itemChange.protected || itemChange.numeric
+					continue
+				}
 				if text, ok := item.(string); ok {
 					masked, err := redact.Text(text, p.Redact)
 					if err != nil {
 						return err
 					}
 					value[key] = masked
-				} else if err := p.redactSchema(ctx, item, field); err != nil {
+					change.changed = change.changed || masked != text
+				} else if err := p.redactSchema(ctx, item, field, change); err != nil {
 					return err
 				}
 			case "enum", "const":
-				change := privacyChange{}
-				if _, err := p.redactValue(ctx, item, resultOther, field, &change); err != nil {
+				itemChange := privacyChange{}
+				if _, err := p.redactValue(ctx, item, resultOther, field, &itemChange); err != nil {
 					return err
 				}
-				if change.changed || change.protected {
+				if itemChange.changed || itemChange.protected {
 					return fmt.Errorf("sensitive schema constraint")
 				}
 			case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas":
@@ -95,33 +112,37 @@ func (p *Proxy) redactSchema(ctx context.Context, value any, field string) error
 						if err != nil || masked != name {
 							return fmt.Errorf("sensitive schema identifier")
 						}
-						if err := p.redactSchema(ctx, schema, name); err != nil {
+						if err := p.redactSchema(ctx, schema, name, change); err != nil {
 							return err
 						}
 					}
-				} else if err := p.redactSchema(ctx, item, field); err != nil {
+				} else if err := p.redactSchema(ctx, item, field, change); err != nil {
 					return err
 				}
 			default:
 				// Check all extensions and nested constraints, preserving their
 				// meaning exactly or omitting the whole tool on sensitive data.
 				if !schemaKeywords[key] {
-					change := privacyChange{}
-					if _, err := p.redactValue(ctx, item, resultOther, key, &change); err != nil {
+					itemField := key
+					if redact.PersonField(field) && !personMetadataValue(key, item) {
+						itemField = field
+					}
+					itemChange := privacyChange{}
+					if _, err := p.redactValue(ctx, item, resultOther, itemField, &itemChange); err != nil {
 						return err
 					}
-					if change.changed || change.protected {
+					if itemChange.changed || itemChange.protected {
 						return fmt.Errorf("sensitive schema extension")
 					}
 				}
-				if err := p.redactSchema(ctx, item, field); err != nil {
+				if err := p.redactSchema(ctx, item, field, change); err != nil {
 					return err
 				}
 			}
 		}
 	case []any:
 		for _, item := range value {
-			if err := p.redactSchema(ctx, item, field); err != nil {
+			if err := p.redactSchema(ctx, item, field, change); err != nil {
 				return err
 			}
 		}
