@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
 )
@@ -151,4 +152,49 @@ var schemaKeywords = map[string]bool{
 	"exclusiveMaximum": true, "multipleOf": true, "minLength": true, "maxLength": true,
 	"pattern": true, "format": true, "contentEncoding": true, "contentMediaType": true,
 	"contentSchema": true, "readOnly": true, "writeOnly": true, "deprecated": true,
+}
+
+var schemaAnnotationKeys = map[string]bool{"description": true, "title": true, "default": true, "examples": true, "example": true}
+
+// A typed, keyword-only descriptor under a person field is schema, not a name.
+// Unknown shapes keep the conservative data walk, including protected-key checks.
+func personalFieldSchema(value map[string]any, field string) bool {
+	if !redact.PersonField(field) {
+		return false
+	}
+	typeOK := func(v any) bool {
+		s, ok := v.(string)
+		if !ok {
+			return false
+		}
+		switch s {
+		case "string", "number", "integer", "boolean", "object", "array", "null":
+			return true
+		}
+		return false
+	}
+	valid := typeOK(value["type"])
+	if types, ok := value["type"].([]any); ok && len(types) > 0 {
+		valid = true
+		for _, t := range types {
+			valid = valid && typeOK(t)
+		}
+	}
+	if !valid {
+		return false
+	}
+	for key := range value {
+		if schemaKeywords[key] || schemaAnnotationKeys[key] {
+			continue
+		}
+		switch key {
+		case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas", "enum", "const":
+			continue
+		}
+		if (personContainerKey(key) && !personValueCarrier(key)) || strings.HasPrefix(key, "x-") {
+			continue
+		}
+		return false
+	}
+	return true
 }

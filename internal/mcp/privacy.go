@@ -28,9 +28,28 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 	}
 	switch value := value.(type) {
 	case map[string]any:
+		if personalFieldSchema(value, field) {
+			before, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			if err := p.redactSchema(ctx, value, field); err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				change.protected = true // Never broaden a schema constraint.
+				return value, nil
+			}
+			after, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			change.changed = change.changed || string(before) != string(after)
+			return value, nil
+		}
 		for key, item := range value {
 			keyField := ""
-			if redact.FieldLabel(field) != "" && redact.FieldLabel(key) == "" {
+			if redact.FieldLabel(field) != "" && redact.FieldLabel(key) == "" && !personContainerKey(key) {
 				keyField = field
 			}
 			maskedKey, err := redact.Field(keyField, key, p.Redact)
@@ -48,12 +67,20 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 			}
 			child := resultChild(value, location, key)
 			childField := key
-			if redact.FieldLabel(key) == "" && redact.FieldLabel(field) != "" {
+			if redact.FieldLabel(key) == "" && redact.FieldLabel(field) != "" && (!personContainerKey(key) || personValueCarrier(key)) {
 				childField = field
+			}
+			var constraintBefore []byte
+			if redact.PersonField(field) && (key == "enum" || key == "const") {
+				constraintBefore, _ = json.Marshal(item)
 			}
 			updated, err := p.redactValue(ctx, item, child, childField, change)
 			if err != nil {
 				return nil, err
+			}
+			if constraintBefore != nil {
+				after, _ := json.Marshal(updated)
+				change.protected = change.protected || string(constraintBefore) != string(after)
 			}
 			if (location == resultProtocol || (location == resultBlock || location == resultResource) &&
 				(key == "type" || key == "uri" || key == "mimeType")) && !sameScalar(item, updated) {
@@ -107,6 +134,28 @@ func (p *Proxy) redactValue(ctx context.Context, value any, location resultLocat
 		}
 	}
 	return value, nil
+}
+
+// Known descriptor keys are structure, not a person's name used as a JSON key.
+// Value/parts wrappers carry the parent data context; metadata does not.
+func personValueCarrier(key string) bool {
+	switch key {
+	case "value", "values", "text", "parts", "components", "default", "example", "examples", "enum", "const":
+		return true
+	}
+	return false
+}
+
+func personContainerKey(key string) bool {
+	if schemaKeywords[key] || schemaAnnotationKeys[key] || personValueCarrier(key) {
+		return true
+	}
+	switch key {
+	case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas", "enum", "const",
+		"enabled", "visible", "hidden", "disabled", "editable", "widget", "label", "language", "lang", "locale", "encoding":
+		return true
+	}
+	return false
 }
 
 // Inspect equivalent integer spellings (decimal/exponent) without float64 or
