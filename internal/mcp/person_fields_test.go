@@ -61,11 +61,10 @@ func TestKnownPersonMetadataPreserved(t *testing.T) {
 			}
 		}
 	}
-	// Custom UI prose cannot be distinguished from a person's name without a
-	// stronger source contract. The conservative fallback must remain explicit.
-	raw := json.RawMessage(`{"structuredContent":{"full_name":{"label":"Public display label"}}}`)
+	// Unsupported vocabulary still keeps the conservative fallback.
+	raw := json.RawMessage(`{"structuredContent":{"full_name":{"label":"Unfamiliar caption"}}}`)
 	out, _ := piiProxy().inspectToolResult(context.Background(), "fixture/read", false, raw)
-	if strings.Contains(string(mustJSON(out)), "Public display label") {
+	if strings.Contains(string(mustJSON(out)), "Unfamiliar caption") {
 		t.Fatal("unknown metadata silently exempted")
 	}
 }
