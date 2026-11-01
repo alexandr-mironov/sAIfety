@@ -14,6 +14,7 @@ import (
 
 	"github.com/saifety-org/sAIfety/internal/sanitize"
 	"github.com/saifety-org/sAIfety/internal/scan"
+	"github.com/saifety-org/sAIfety/internal/scan/normalize"
 	"github.com/saifety-org/sAIfety/internal/scan/redact"
 	"github.com/saifety-org/sAIfety/internal/stats"
 	"github.com/saifety-org/sAIfety/pkg/contextscan"
@@ -333,7 +334,15 @@ func (p *Proxy) toolsList(ctx context.Context, req *Message) *Message {
 			continue
 		}
 		if v.Action != scan.ActionPass {
-			t.Description = sanitize.Apply(t.Description, v)
+			base := t.Description
+			if v.Action == scan.ActionSanitize {
+				// Findings' spans are offsets in the normalized scan input
+				// (description + "\n" + schema); strip that form or the cut
+				// lands on the wrong bytes. Wrap-only actions ignore spans
+				// and keep the raw description.
+				base = normalize.Text(raw)
+			}
+			t.Description = sanitize.Apply(base, v)
 		}
 		if warns := p.integrityFindings(name, g.tool, shadows); len(warns) > 0 {
 			for _, w := range warns {
