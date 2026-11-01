@@ -372,10 +372,15 @@ func (p *Proxy) toolsList(ctx context.Context, req *Message) *Message {
 }
 
 // scanDescription scans a tool description with the lexical DescScanner and
-// caches the verdict by content hash.
+// caches the verdict by content hash. The trusted flag is part of the key:
+// it changes the verdict (trust downgrade), so a trusted and an untrusted
+// server must not share a cached verdict for identical descriptions.
 func (p *Proxy) scanDescription(ctx context.Context, source, raw string, trusted bool) scan.Verdict {
 	h := sha256.Sum256([]byte(raw))
 	key := hex.EncodeToString(h[:])
+	if trusted {
+		key += "|trusted"
+	}
 	p.descMu.Lock()
 	if p.descCache == nil {
 		p.descCache = map[string]scan.Verdict{}
