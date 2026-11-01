@@ -34,6 +34,19 @@ func Apply(text string, v scan.Verdict) string {
 	return text
 }
 
+// StripBase returns the text Apply must rewrite for the verdict. Findings'
+// spans are offsets in the document's NORMALIZED text (doc.Text), which can
+// differ byte-for-byte from the raw input after NFKC folding and invisible
+// rune removal, so the sanitize action must cut the normalized form —
+// stripping the raw text would cut the wrong bytes and leave the payload in
+// place. Wrap-only actions (warn, block) ignore spans and keep the raw bytes.
+func StripBase(doc *scan.Document, v scan.Verdict) string {
+	if v.Action == scan.ActionSanitize {
+		return doc.Text
+	}
+	return doc.Raw
+}
+
 // wrap escapes fence markers and encloses the data in a labeled block.
 func wrap(text string, v scan.Verdict) string {
 	escaped := strings.ReplaceAll(text, "```", "'''")

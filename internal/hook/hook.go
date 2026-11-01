@@ -86,14 +86,15 @@ func (h *Handler) SessionStart(ctx context.Context, in Input) (Output, error) {
 		if h.Context != nil && strings.TrimSpace(string(raw)) != "" {
 			contextDocs = append(contextDocs, contextscan.Document{Kind: "file", Trust: "untrusted", Text: string(raw), Source: rel})
 		}
-		v := h.Scanner.Scan(ctx, &scan.Document{Source: rel, Kind: scan.KindInstructions, Raw: string(raw)})
+		doc := &scan.Document{Source: rel, Kind: scan.KindInstructions, Raw: string(raw)}
+		v := h.Scanner.Scan(ctx, doc)
 		h.Stats.Record(v)
 		if v.Action == scan.ActionBlock && h.Blocklist != nil {
 			if err := h.Blocklist.Block(p, "critical findings in instruction file"); err != nil {
 				fmt.Fprintf(&b, "\n[sAIfety] failed to persist source block: %v\n", err)
 			}
 		}
-		fmt.Fprintf(&b, "\n# Project instructions from %s (verified by sAIfety: %s)\n\n%s\n", rel, v.Level, sanitize.Apply(string(raw), v))
+		fmt.Fprintf(&b, "\n# Project instructions from %s (verified by sAIfety: %s)\n\n%s\n", rel, v.Level, sanitize.Apply(sanitize.StripBase(doc, v), v))
 	}
 	if len(contextDocs) > 0 {
 		h.Context.Observe(ctx, contextDocs)
@@ -179,7 +180,8 @@ func (h *Handler) PostToolUse(ctx context.Context, in Input) (Output, error) {
 		if len(s) < 16 {
 			return mask(s)
 		}
-		v := h.Scanner.Scan(ctx, &scan.Document{Source: source, Kind: scan.KindToolResult, Raw: s})
+		doc := &scan.Document{Source: source, Kind: scan.KindToolResult, Raw: s}
+		v := h.Scanner.Scan(ctx, doc)
 		h.Stats.Record(v)
 		if v.Level > worst {
 			worst = v.Level
@@ -194,7 +196,7 @@ func (h *Handler) PostToolUse(ctx context.Context, in Input) (Output, error) {
 		if v.Action == scan.ActionBlock && h.Blocklist != nil {
 			blockErr = errors.Join(blockErr, h.Blocklist.Block(inputSource(in.ToolInput), "critical findings in tool output"))
 		}
-		out := sanitize.Apply(s, v)
+		out := sanitize.Apply(sanitize.StripBase(doc, v), v)
 		return mask(out)
 	})
 	// The official hook payload has no authorized user task. Observe the raw JSON
